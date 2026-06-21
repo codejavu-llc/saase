@@ -62,6 +62,7 @@ type detectionKind int
 const (
 	kindSlugOnly detectionKind = iota // weak signal -> yellow
 	kindViaSSO                        // strong signal -> dark green
+	kindViaTXT                        // explicit DNS record signal -> custom label
 )
 
 // service represents a single checkable SaaS integration.
@@ -90,6 +91,8 @@ func logHit(verbose bool, label string, kind detectionKind) {
 	switch kind {
 	case kindViaSSO:
 		write("%s[+] %s - Via SSO%s\n", colorDarkGreen, label, colorReset)
+	case kindViaTXT:
+		write("%s[+] %s - Via TXT Record%s\n", colorCyan, label, colorReset)
 	default:
 		write("%s[+] %s - Slug Only%s\n", colorYellow, label, colorReset)
 	}
@@ -299,8 +302,31 @@ func main() {
 	hits := 0
 
 	originalStdout := os.Stdout
+
+	// Execute TXT Discovery validation prior to sequential pipeline runs
+	discoveredViaTXT := make(map[string]bool)
+	txtServices := services.CheckTXTServices(*domainPtr)
+	for _, rawSvc := range txtServices {
+		normSvc := strings.ToLower(rawSvc)
+		discoveredViaTXT[normSvc] = true
+		logHit(*verbosePtr, rawSvc, kindViaTXT)
+		hits++
+	}
+
 	for _, svc := range buildRegistry() {
 		if !svc.matches(targets) {
+			continue
+		}
+
+		// Evaluate cancellation criteria if service identifier has been checked via TXT mapping matches
+		skipService := false
+		for _, name := range svc.names {
+			if discoveredViaTXT[name] {
+				skipService = true
+				break
+			}
+		}
+		if skipService {
 			continue
 		}
 

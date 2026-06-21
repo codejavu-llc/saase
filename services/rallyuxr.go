@@ -109,9 +109,11 @@ func CheckRallyUXR(domain string, proxyURL string) bool {
 		return false
 	}
 
-	if strings.Contains(string(bodyBytes), "authorizationUrl") {
-		return true
+	bodyStr := string(bodyBytes)
+	
+	if strings.Contains(bodyStr, `"type":"ERROR"`) {
+		return false
 	}
 
-	return false
+	return true
 }

@@ -3,7 +3,6 @@ package services
 import (
 	"crypto/tls"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -51,13 +50,7 @@ func CheckTalentLMS(domain string, proxyURL string) bool {
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Warning: Failed to read TalentLMS response body: %v\n", err)
-		return false
-	}
-
-	if strings.Contains(string(bodyBytes), "TalentLMS - Cloud based") {
+	if resp.StatusCode == 404 {
 		return false
 	}
 
