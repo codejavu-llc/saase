@@ -306,8 +306,15 @@ func main() {
 	// Execute TXT Discovery validation prior to sequential pipeline runs
 	discoveredViaTXT := make(map[string]bool)
 	txtServices := services.CheckTXTServices(*domainPtr)
+	
 	for _, rawSvc := range txtServices {
 		normSvc := strings.ToLower(rawSvc)
+		
+		// Skip duplicate discoveries inside TXT records
+		if discoveredViaTXT[normSvc] {
+			continue
+		}
+		
 		discoveredViaTXT[normSvc] = true
 		logHit(*verbosePtr, rawSvc, kindViaTXT)
 		hits++
