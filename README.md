@@ -32,7 +32,7 @@ Most recon tools focus on subdomains, ports, or technologies. `saase` fills a ga
 ```bash
 git clone https://github.com/codejavu-llc/saase.git
 cd saase
-go mod init
+go mod init ghscan
 go mod tidy
 go build -o saase
 ```
