@@ -1,0 +1,97 @@
+---
+- id: activecampaign
+  name: ActiveCampaign
+  category: marketing
+  description: Customer experience automation, email marketing, and CRM platform
+  website: https://www.activecampaign.com
+  impact: Compromised credentials expose customer contacts, campaigns, automations, and connected sales data.
+- id: bamboohr
+  name: BambooHR
+  category: hr
+  description: Human resources information system for employee records and workforce management
+  website: https://www.bamboohr.com
+  impact: Compromised credentials expose employee PII, payroll-related records, performance data, and HR workflows.
+- id: freshworks
+  name: Freshworks
+  category: support
+  description: Customer and employee engagement software suite
+  website: https://www.freshworks.com
+  impact: Compromised credentials may expose customer support, CRM, and employee-service data.
+- id: sumo-logic
+  name: Sumo Logic
+  category: monitoring
+  description: Cloud-native log analytics and security monitoring platform
+  website: https://www.sumologic.com
+  impact: Compromised credentials expose application logs, security telemetry, alerts, and operational data.
+- id: talentlms
+  name: TalentLMS
+  category: hr
+  description: Cloud learning management system for employee and partner training
+  website: https://www.talentlms.com
+  impact: Compromised credentials expose learner identities, course content, completion data, and administrative settings.
+- id: algolia
+  name: Algolia
+  category: devtools
+  description: Hosted search and discovery API platform
+  website: https://www.algolia.com
+  impact: Compromised credentials expose search indexes, API keys, analytics, and ranking configuration.
+- id: chargebee
+  name: Chargebee
+  category: payments
+  description: Subscription billing and revenue management platform
+  website: https://www.chargebee.com
+  impact: Compromised credentials expose customer, subscription, invoice, and billing configuration data.
+- id: dialpad
+  name: Dialpad
+  category: communication
+  description: Cloud business communications, voice, messaging, and meetings platform
+  website: https://www.dialpad.com
+  impact: Compromised credentials expose business communications, call records, messages, and administrative settings.
+- id: doodle
+  name: Doodle
+  category: collaboration
+  description: Scheduling and meeting coordination platform
+  website: https://doodle.com
+  impact: Compromised credentials expose scheduling data, participant details, and connected calendar information.
+- id: freshchat
+  name: Freshchat
+  category: support
+  description: Customer messaging and support platform from Freshworks
+  website: https://www.freshworks.com/live-chat-software/
+  impact: Compromised credentials expose customer conversations, contact data, and support automation.
+- id: gainsight
+  name: Gainsight
+  category: crm
+  description: Customer success and product experience platform
+  website: https://www.gainsight.com
+  impact: Compromised credentials expose customer health, engagement, renewal, and product usage data.
+- id: kustomer
+  name: Kustomer
+  category: support
+  description: Customer service CRM and messaging platform
+  website: https://www.kustomer.com
+  impact: Compromised credentials expose customer profiles, conversations, and support workflows.
+- id: lacework
+  name: Lacework
+  category: security
+  description: Cloud security posture and workload protection platform
+  website: https://www.lacework.com
+  impact: Compromised credentials expose security findings, cloud inventory, policies, and integrations.
+- id: lucid
+  name: Lucid
+  category: collaboration
+  description: Visual collaboration suite including Lucidchart and Lucidspark
+  website: https://lucid.co
+  impact: Compromised credentials expose diagrams, architecture documentation, and collaborative workspaces.
+- id: sharefile
+  name: ShareFile
+  category: storage
+  description: Secure enterprise file sharing and document collaboration platform
+  website: https://www.sharefile.com
+  impact: Compromised credentials expose shared business files, client data, and workflow configuration.
+- id: wistia
+  name: Wistia
+  category: video
+  description: Business video hosting and marketing platform
+  website: https://wistia.com
+  impact: Compromised credentials expose private video assets, viewer analytics, and embed configuration.

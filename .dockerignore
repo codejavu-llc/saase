@@ -1,0 +1,9 @@
+.git
+.github
+.saase
+coverage.out
+dist
+saase
+*.db
+*.sqlite
+*.sqlite3

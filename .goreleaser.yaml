@@ -1,0 +1,46 @@
+version: 2
+
+builds:
+  - id: saase
+    main: .
+    binary: saase
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s, -w]
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - COPYRIGHT
+      - THIRD_PARTY_NOTICES.md
+      - SECURITY.md
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    args:
+      - sign-blob
+      - --yes
+      - --output-signature=${signature}
+      - ${artifact}
+
+changelog:
+  use: git
+  filters:
+    exclude: ['^docs:', '^test:', '^chore:']
+
+release:
+  draft: true

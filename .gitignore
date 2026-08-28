@@ -1,0 +1,9 @@
+/saase
+/dist/
+/*.db
+/*.db-shm
+/*.db-wal
+/coverage.out
+/.idea/
+/.vscode/
+*.log
