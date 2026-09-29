@@ -224,6 +224,7 @@ func TestActiveProbeRejectsErrorStatuses(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			cfg := DefaultConfig()
 			cfg.Active = true
+			cfg.IncludeSlugs = true
 			cfg.Retries = 0
 			cfg.RateLimit = 1000
 			cfg.Timeout = time.Second
@@ -255,6 +256,7 @@ func TestActiveProbePositiveAndNegativeFingerprint(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := DefaultConfig()
 			cfg.Active = true
+			cfg.IncludeSlugs = true
 			cfg.Retries = 0
 			cfg.RateLimit = 1000
 			cfg.Timeout = time.Second
@@ -428,6 +430,7 @@ func TestTargetResultCache(t *testing.T) {
 func TestHTTPRetryAndAggregation(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Active = true
+	cfg.IncludeSlugs = true
 	cfg.Retries = 1
 	cfg.RateLimit = 1000
 	cfg.Timeout = time.Second
@@ -470,6 +473,7 @@ func TestCancelledScan(t *testing.T) {
 func TestActiveNetworkFailureIsErrorNotFinding(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Active = true
+	cfg.IncludeSlugs = true
 	cfg.Retries = 0
 	cfg.Timeout = time.Second
 	s := testScanner(t, cfg)

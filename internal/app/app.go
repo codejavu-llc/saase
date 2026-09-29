@@ -89,7 +89,7 @@ type scanOptions struct {
 	domains, domainFiles, providers, providerFiles, slugs                 stringList
 	organization, outputFile, format, profile, proxy, rulesDir, storePath string
 	active, verbose, silent, noColor, insecure, sensitive, forceStdin     bool
-	noCache                                                               bool
+	noCache, includeSlugs                                                 bool
 	timeout, cacheTTL                                                     time.Duration
 	retries, concurrency                                                  int
 	rateLimit                                                             float64
@@ -108,7 +108,7 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	set.Var(&options.providers, "provider", "provider name or ID (repeatable or comma-separated)")
 	set.Var(&options.providerFiles, "c", "deprecated: file containing provider names")
 	set.Var(&options.providerFiles, "providers-file", "file containing provider names")
-	set.Var(&options.slugs, "slug", "explicit tenant slug candidate")
+	set.Var(&options.slugs, "slug", "tenant slug; enables slug probes alongside domains, or slug-only scanning without domains (requires --active)")
 	set.StringVar(&options.organization, "org", "", "organization name override")
 	set.StringVar(&options.outputFile, "o", "", "mirror findings to a file")
 	set.StringVar(&options.format, "format", "text", "output format: text, json, jsonl, csv")
@@ -118,6 +118,7 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	set.StringVar(&options.rulesDir, "rules-dir", "", "external provider rule directory")
 	set.StringVar(&options.storePath, "store", "", "SQLite database for scan history")
 	set.BoolVar(&options.active, "active", false, "enable bounded HTTP tenant probes")
+	set.BoolVar(&options.includeSlugs, "include-slugs", false, "include domain-derived tenant slug probes with active scanning")
 	set.BoolVar(&options.verbose, "v", false, "show evidence and probe errors")
 	set.BoolVar(&options.verbose, "verbose", false, "show evidence and probe errors")
 	set.BoolVar(&options.silent, "silent", false, "print pipe-friendly findings only")
@@ -153,15 +154,15 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		}
 		options.providers = append(options.providers, values...)
 	}
-	if options.forceStdin || (len(options.domains) == 0 && !readerIsTerminal(stdin)) {
+	if options.forceStdin || (len(options.domains) == 0 && len(options.slugs) == 0 && !readerIsTerminal(stdin)) {
 		values, err := readLines(stdin)
 		if err != nil {
 			return fmt.Errorf("read targets from stdin: %w", err)
 		}
 		options.domains = append(options.domains, values...)
 	}
-	if len(options.domains) == 0 {
-		return fmt.Errorf("no target specified; use -d, -l, or --stdin")
+	if len(options.domains) == 0 && len(options.slugs) == 0 {
+		return fmt.Errorf("no target specified; use -d, -l, --stdin, or --slug")
 	}
 	if options.organization != "" && len(options.domains) != 1 {
 		return fmt.Errorf("--org can only be used with one target")
@@ -185,8 +186,15 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 			normalized, seen[item.Host] = append(normalized, item), true
 		}
 	}
+	if len(options.domains) == 0 {
+		normalized, err = target.NormalizeSlugs(options.slugs)
+		if err != nil {
+			return err
+		}
+	}
 	cfg := defaults
 	cfg.Profile, cfg.Active, cfg.Concurrency, cfg.RateLimit = options.profile, options.active, options.concurrency, options.rateLimit
+	cfg.IncludeSlugs = options.includeSlugs || (len(options.domains) > 0 && len(options.slugs) > 0)
 	cfg.Timeout, cfg.Retries, cfg.Proxy, cfg.InsecureTLS = options.timeout, options.retries, options.proxy, options.insecure
 	cfg.ShowSensitiveEvidence = options.sensitive
 	cfg.CacheTTL, cfg.DisableCache = options.cacheTTL, options.noCache
@@ -453,6 +461,7 @@ func writeRootUsage(w io.Writer) {
 
 Usage:
   saase scan [options] [domain ...]
+  saase scan --slug SLUG --active [options]
   saase providers list [--format text|json]
   saase rules validate [--rules-dir DIR]
   saase diff [--db saase.db] [--from ID --to ID]
@@ -461,5 +470,8 @@ Usage:
 Legacy scan flags (-d, -s, -c, -o, -v, -x) continue to work without the "scan" command.`)
 }
 func writeScanUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "Usage: saase scan -d example.com [--active] [--format text|json|jsonl|csv]")
+	_, _ = fmt.Fprintln(w, "Usage: saase scan -d example.com [--active] [--include-slugs] [--format text|json|jsonl|csv]")
+	_, _ = fmt.Fprintln(w, "       saase scan --slug acme --active [-s slack] [--format text|json|jsonl|csv]")
+	_, _ = fmt.Fprintln(w, "Domain scans skip slug-based services unless --include-slugs or --slug NAME is supplied; -s selects providers.")
+	_, _ = fmt.Fprintln(w, "--slug is repeatable or comma-separated; without a domain, only slug-based HTTP services are checked.")
 }

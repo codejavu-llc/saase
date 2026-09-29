@@ -79,6 +79,7 @@ func NormalizeTarget(input string, overrides TargetOverrides) (Target, error) {
 }
 
 // Scan normalizes domain inputs and runs the selected provider detectors.
+// Slug-based HTTP probes require Config.IncludeSlugs as well as active mode.
 func (s *Scanner) Scan(ctx context.Context, domains, providers []string) (ScanReport, error) {
 	targets := make([]target.Target, 0, len(domains))
 	seen := make(map[string]bool)
@@ -91,6 +92,16 @@ func (s *Scanner) Scan(ctx context.Context, domains, providers []string) (ScanRe
 			targets = append(targets, item)
 			seen[item.Host] = true
 		}
+	}
+	return s.engine.Scan(ctx, targets, providers)
+}
+
+// ScanSlugs checks only slug-based HTTP services, skipping DNS and services
+// requiring a domain. Config.Active or a standard/deep profile is required.
+func (s *Scanner) ScanSlugs(ctx context.Context, slugs, providers []string) (ScanReport, error) {
+	targets, err := target.NormalizeSlugs(slugs)
+	if err != nil {
+		return ScanReport{}, err
 	}
 	return s.engine.Scan(ctx, targets, providers)
 }

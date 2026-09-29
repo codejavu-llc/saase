@@ -3,9 +3,12 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/codejavu-llc/saase/v2/internal/model"
 )
 
 func TestInformationalCommands(t *testing.T) {
@@ -92,5 +95,54 @@ func TestScanSubdomainScope(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "TARGETS 3") {
 		t.Fatalf("equivalent hostname was not deduplicated: %s", stdout.String())
+	}
+}
+
+func TestSlugOnlyCLI(t *testing.T) {
+	for _, mode := range [][]string{{"--active"}, {"--profile", "standard"}, {"--profile", "deep"}} {
+		var stdout, stderr bytes.Buffer
+		args := append([]string{"scan", "--slug", "ACME,beta", "--slug", "acme", "-s", "microsoft-365,google-workspace", "--format", "json"}, mode...)
+		// Domain-only providers are skipped. Unrequested stdin must not be read.
+		code := Run(context.Background(), args, strings.NewReader("not-a-domain"), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("%v exit=%d stderr=%s", args, code, stderr.String())
+		}
+		var report model.ScanReport
+		if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+			t.Fatal(err)
+		}
+		if report.Metadata.Targets != 2 || strings.Join(report.Metadata.TargetNames, ",") != "acme,beta" || !report.Metadata.Active {
+			t.Fatalf("metadata = %#v", report.Metadata)
+		}
+		if len(report.Findings) != 0 || len(report.Errors) != 0 {
+			t.Fatalf("domain-only providers should be skipped: %#v", report)
+		}
+	}
+}
+
+func TestSlugCLIValidation(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--slug", "acme"}, "require --active"},
+		{[]string{"--slug", "example.com", "--active"}, "invalid tenant slug"},
+		{[]string{"--slug", "acme", "--active", "-s", "not-a-provider"}, "unknown provider"},
+		{[]string{"--slug", "acme", "--active", "--org", "Example"}, "--org can only be used with one target"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Run(context.Background(), test.args, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), test.want) {
+			t.Fatalf("%v exit=%d stderr=%s", test.args, code, stderr.String())
+		}
+	}
+}
+
+func TestDomainWithSlugStillReadsExplicitStdin(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	Run(ctx, []string{"scan", "--slug", "acme", "--stdin", "--no-color"}, strings.NewReader("example.com"), &stdout, &stderr)
+	if !strings.Contains(stdout.String(), "SCOPE     example.com") || strings.Contains(stderr.String(), "require --active") {
+		t.Fatalf("domain plus slug stdout=%s stderr=%s", stdout.String(), stderr.String())
 	}
 }

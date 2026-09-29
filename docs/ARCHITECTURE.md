@@ -29,12 +29,16 @@ evidence aggregation ────────────────► determi
 ## Boundaries
 
 - `internal/target` accepts domains, subdomains, and URLs, rejects IPs and malformed names, and converts IDNs. Scans, target deduplication, and cache entries use the full normalized hostname; the public suffix list identifies the registrable parent domain for organization and tenant slug suggestions.
+- Slug-only targets have an explicit slug and no hostname or apex. They require active mode, bypass all DNS discovery, and skip active probes marked as requiring a domain. Reports and cache entries identify each slug separately; no domain or additional candidates are inferred.
+- Domain targets skip slug-based HTTP probes unless `Config.IncludeSlugs` is enabled. The CLI enables this with `--include-slugs` or an explicit `--slug` alongside a domain. Provider selection (`-s`) does not enable slug probes. The flag is recorded in scan metadata and included in cache keys.
 - `internal/catalog` parses and validates embedded or user-supplied YAML. DNS suffix matches require a label boundary, preventing `evilokta.com` from matching `okta.com`; SPF matches require an exact `include:` mechanism domain rather than a substring.
 - `internal/engine` owns concurrency, cancellation, timeouts, retries, per-provider pacing, response limits, safe redirects, evidence aggregation, and detector execution.
 - `internal/model` is the schema source of truth. Every serialized finding declares schema version `2.0`.
 - `internal/output` renders ordered findings immediately for text and silent modes while keeping structured final reports deterministic. Operational errors are returned separately for stderr.
 - `internal/store` stores complete reports and indexed finding identities in SQLite. Cache keys include target normalization, selected providers, profile, safety settings, and catalog dimensions.
 - `pkg/saase` is the supported public Go API. Internal packages are intentionally not importable by downstream modules.
+
+The public scanner exposes `Scan` for domains and `ScanSlugs` for independent tenant slugs. `Scan` requires `Config.IncludeSlugs` to add domain-derived slug probes. `ScanSlugs` requires `Config.Active` or a standard/deep profile, and operates independently of `Config.IncludeSlugs`.
 
 ## Detector policy
 

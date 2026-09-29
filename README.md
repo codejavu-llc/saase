@@ -52,8 +52,24 @@ saase scan -d example.com --format jsonl | jq -r '.provider_id'
 saase scan -l scope.txt --format json
 cat scope.txt | saase scan --stdin --silent
 
-# One provider, with bounded tenant probing explicitly enabled
-saase scan -d example.com -s slack --active -v
+# Domain-based HTTP checks, with no tenant slug probes
+saase scan -d example.com --active
+
+# Include tenant slugs derived from the domain
+saase scan -d example.com --active --include-slugs
+
+# One provider, with tenant slug probing explicitly enabled
+saase scan -d example.com -s slack --active --include-slugs -v
+
+# Supply an extra tenant slug and enable slug probes alongside domain checks
+saase scan -d example.com --slug acme --active
+
+# Tenant slug only: skip DNS and services that require a domain
+saase scan --slug acme --active
+saase scan --slug acme --active -s slack,okta
+
+# Multiple independent tenant slugs (also accepts repeated --slug flags)
+saase scan --slug acme,other-team --active --format json
 
 # Save history and reuse evidence for 24 hours
 saase scan -d example.com --store recon.db
@@ -61,7 +77,11 @@ saase diff --db recon.db --list
 saase diff --db recon.db
 ```
 
-Targets retain their full hostname: `domain.com`, `subdomains.domain.com`, and `other.domain.com` are scanned and cached separately. URLs are accepted and normalized to their hostname. DNS checks and domain-based SSO probes use that hostname; provider-specific DNS labels are checked beneath it. Tenant slug suggestions still come from the registrable parent domain, with `--slug` available for overrides.
+Targets retain their full hostname: `domain.com`, `subdomains.domain.com`, and `other.domain.com` are scanned and cached separately. URLs are accepted and normalized to their hostname. DNS checks and domain-based SSO probes use that hostname; provider-specific DNS labels are checked beneath it. Domain scans skip slug-based HTTP services by default, including with `--active`, `--profile standard`, or `--profile deep`. Add `--include-slugs` to check tenant names derived from the registrable parent domain, or `--slug NAME` to enable slug probes and add explicit candidates. HTTP probes still require active mode. `-s` / `--provider` only filters providers and does not enable slug probes. Cached results distinguish domain-only scans from scans that include slugs.
+
+With `--slug` and no domain input, only slug-based tenant/SSO HTTP services are checked. DNS discovery and services requiring a domain (such as Microsoft 365 and Google Workspace) are skipped, even when selected with `-s`. Use `--active`, `--profile standard`, or `--profile deep`; passive-only slug scans return an error. Each unique slug is reported and cached separately, with no extra candidates generated. Slugs are lowercased and must contain 1–63 ASCII letters, digits, or internal hyphens. When domains are supplied, `--slug` continues to add tenant candidates to each domain scan. With explicit slugs, stdin is read only when `--stdin` is supplied.
+
+Tenant existence checks for Freshdesk, Freshworks, Monday, OneLogin, BambooHR, and TalentLMS reject their known generic or missing-tenant redirects. BambooHR is checked at `/home/`. Okta rejects HTTP 404 and responses containing all three `x-rate-limit-limit`, `x-rate-limit-remaining`, and `x-rate-limit-reset` headers. Accepted tenant responses from these services have `medium` confidence; negative matches produce no finding. HTTP errors and timeouts do not produce positive findings. Sumo Logic slug detection is temporarily disabled.
 
 The old root-level flags still work during the v2 compatibility window:
 
@@ -81,7 +101,7 @@ The default text view streams each accepted finding as soon as it is observed, t
 | `standard` | Passive signals plus bounded, non-destructive tenant probes |
 | `deep` | Currently equivalent to `standard`; reserved for reviewed multi-step SSO probes |
 
-`--active` enables standard active probes without changing the profile name. Active probes never create accounts, claim tenants, send password resets, submit credentials, or attempt exploitation. A detected endpoint is not automatically a vulnerability.
+`--active` enables standard active probes without changing the profile name. Domain targets use domain-based probes by default; slug-based probes require `--include-slugs` or an explicit `--slug`. Slug-only targets continue to check slug-based services. Active probes never create accounts, claim tenants, send password resets, submit credentials, or attempt exploitation. A detected endpoint is not automatically a vulnerability.
 
 TLS verification is always enabled unless `--insecure` is explicitly supplied. This choice is recorded in JSON metadata.
 
@@ -95,11 +115,14 @@ Input:
   -s, --provider PROVIDER      provider name or stable ID
       --providers-file FILE    provider names or IDs, one per line
       --org NAME               organization override for a single target
-      --slug SLUG              extra tenant slug candidate
+      --slug SLUG              tenant slug; repeatable or comma-separated
+                              without domains: slug-only scan (needs --active)
+                              with domains: enable slugs and add a candidate
 
 Scanning:
       --profile PROFILE        passive, standard, or deep
       --active                 enable bounded tenant HTTP probes
+      --include-slugs          include domain-derived slug probes in active scans
       --concurrency N          maximum concurrent operations (default 20)
       --rate-limit N           requests/second/provider (default 2)
       --timeout DURATION       per-operation timeout (default 10s)

@@ -22,6 +22,7 @@ import (
 type Config struct {
 	Profile               string
 	Active                bool
+	IncludeSlugs          bool // Include slug-based HTTP probes when scanning domains.
 	Concurrency           int
 	RateLimit             float64
 	Timeout               time.Duration
@@ -140,6 +141,11 @@ func (s *Scanner) Scan(ctx context.Context, targets []target.Target, providerSel
 	if len(targets) == 0 {
 		return model.ScanReport{}, fmt.Errorf("at least one target is required")
 	}
+	for _, item := range targets {
+		if item.IsSlugOnly() && !s.cfg.Active {
+			return model.ScanReport{}, fmt.Errorf("slug-only scans require --active or --profile standard/deep")
+		}
+	}
 	selected, err := s.catalog.ResolveSelectors(providerSelectors)
 	if err != nil {
 		return model.ScanReport{}, err
@@ -147,10 +153,10 @@ func (s *Scanner) Scan(ctx context.Context, targets []target.Target, providerSel
 	started := time.Now().UTC()
 	report := model.ScanReport{Metadata: model.ScanMetadata{
 		SchemaVersion: model.SchemaVersion, ScanID: scanID(), StartedAt: started, Profile: s.cfg.Profile,
-		Active: s.cfg.Active, InsecureTLS: s.cfg.InsecureTLS, Targets: len(targets), ProviderRules: len(s.catalog.Providers()),
+		Active: s.cfg.Active, IncludeSlugs: s.cfg.IncludeSlugs, InsecureTLS: s.cfg.InsecureTLS, Targets: len(targets), ProviderRules: len(s.catalog.Providers()),
 	}}
 	for _, item := range targets {
-		report.Metadata.TargetNames = append(report.Metadata.TargetNames, item.Host)
+		report.Metadata.TargetNames = append(report.Metadata.TargetNames, item.Name())
 	}
 	startedMetadata := report.Metadata
 	startedMetadata.TargetNames = append([]string(nil), report.Metadata.TargetNames...)
@@ -219,7 +225,7 @@ type cachedTargetResult struct {
 
 func (s *Scanner) scanTargetCached(ctx context.Context, t target.Target, selected map[string]bool) ([]model.Finding, []model.ProbeError) {
 	key := s.cacheKey(t, selected)
-	version := catalog.CatalogVersion + ":" + s.catalog.Fingerprint() + ":engine-v3"
+	version := catalog.CatalogVersion + ":" + s.catalog.Fingerprint() + ":engine-v6"
 	if s.cache != nil && !s.cfg.DisableCache {
 		if payload, ok, err := s.cache.GetCache(ctx, key, version); err == nil && ok {
 			var cached cachedTargetResult
@@ -246,8 +252,11 @@ func (s *Scanner) cacheKey(t target.Target, selected map[string]bool) string {
 	}
 	sort.Strings(providers)
 	value := strings.Join([]string{t.Host, strings.Join(t.SlugCandidates, ","), strings.Join(providers, ","), s.cfg.Profile,
-		fmt.Sprint(s.cfg.Active), fmt.Sprint(s.cfg.InsecureTLS), fmt.Sprint(s.cfg.ShowSensitiveEvidence),
+		fmt.Sprint(s.cfg.Active), fmt.Sprint(s.cfg.IncludeSlugs), fmt.Sprint(s.cfg.InsecureTLS), fmt.Sprint(s.cfg.ShowSensitiveEvidence),
 		fmt.Sprintf("%d:%d:%d", len(s.catalog.Providers()), len(s.catalog.TXT), len(s.catalog.DNS))}, "|")
+	if t.IsSlugOnly() {
+		value = "slug:" + t.Slug + "|" + value
+	}
 	sum := sha256.Sum256([]byte(value))
 	return "target:" + hex.EncodeToString(sum[:])
 }
@@ -263,6 +272,9 @@ func (s *Scanner) scanTarget(ctx context.Context, t target.Target, selected map[
 }
 
 func (s *Scanner) passiveFindings(ctx context.Context, t target.Target, selected map[string]bool) ([]model.Finding, []model.ProbeError) {
+	if t.IsSlugOnly() {
+		return nil, nil
+	}
 	var findings []model.Finding
 	var probeErrors []model.ProbeError
 

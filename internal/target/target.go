@@ -15,6 +15,7 @@ type Target struct {
 	Input          string   `json:"input"`
 	Host           string   `json:"host"`
 	Apex           string   `json:"apex"`
+	Slug           string   `json:"slug,omitempty"`
 	Organization   string   `json:"organization"`
 	SlugCandidates []string `json:"slug_candidates"`
 }
@@ -22,6 +23,47 @@ type Target struct {
 type Overrides struct {
 	Organization string
 	Slugs        []string
+}
+
+// Name identifies a target in reports, whether it is a hostname or a slug.
+func (t Target) Name() string {
+	if t.Slug != "" {
+		return t.Slug
+	}
+	return t.Host
+}
+
+func (t Target) IsSlugOnly() bool { return t.Slug != "" }
+
+// NormalizeSlugs creates one target per unique tenant slug, without inventing
+// a domain or deriving additional candidates. Slugs must fit a DNS label since
+// tenant probes commonly interpolate them into provider hostnames.
+func NormalizeSlugs(raw []string) ([]Target, error) {
+	var targets []Target
+	seen := make(map[string]bool)
+	for _, input := range raw {
+		slug := strings.ToLower(strings.TrimSpace(input))
+		if !validSlug(slug) {
+			return nil, fmt.Errorf("invalid tenant slug %q: use 1-63 ASCII letters, digits, or internal hyphens", input)
+		}
+		if !seen[slug] {
+			targets = append(targets, Target{Input: input, Slug: slug, Organization: slug, SlugCandidates: []string{slug}})
+			seen[slug] = true
+		}
+	}
+	return targets, nil
+}
+
+func validSlug(slug string) bool {
+	if len(slug) == 0 || len(slug) > 63 || slug[0] == '-' || slug[len(slug)-1] == '-' {
+		return false
+	}
+	for _, ch := range slug {
+		if !(ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func Normalize(raw string, overrides Overrides) (Target, error) {

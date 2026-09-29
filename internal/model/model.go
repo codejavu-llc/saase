@@ -85,6 +85,7 @@ type ScanMetadata struct {
 	DurationMS    int64         `json:"duration_ms"`
 	Profile       string        `json:"profile"`
 	Active        bool          `json:"active"`
+	IncludeSlugs  bool          `json:"include_slugs"`
 	InsecureTLS   bool          `json:"insecure_tls"`
 	Targets       int           `json:"targets"`
 	TargetNames   []string      `json:"target_names"`

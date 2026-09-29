@@ -1,6 +1,9 @@
 package target
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalize(t *testing.T) {
 	tests := []struct {
@@ -72,4 +75,31 @@ func FuzzNormalize(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, input string) { _, _ = Normalize(input, Overrides{}) })
+}
+
+func TestNormalizeSlugs(t *testing.T) {
+	targets, err := NormalizeSlugs([]string{" ACME ", "acme", "team-42", "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 3 {
+		t.Fatalf("targets = %#v", targets)
+	}
+	for i, want := range []string{"acme", "team-42", "x"} {
+		got := targets[i]
+		if !got.IsSlugOnly() || got.Name() != want || got.Host != "" || got.Apex != "" {
+			t.Fatalf("slug target = %#v, want %s without a domain", got, want)
+		}
+		if len(got.SlugCandidates) != 1 || got.SlugCandidates[0] != want {
+			t.Fatalf("unexpected candidates: %v", got.SlugCandidates)
+		}
+	}
+	for _, input := range []string{"", " ", "-acme", "acme-", "a.b", "acme/corp", "https://acme.com", "acme?x=y", "a_b", "bücher", strings.Repeat("a", 64)} {
+		if _, err := NormalizeSlugs([]string{input}); err == nil {
+			t.Errorf("invalid slug %q accepted", input)
+		}
+	}
+	if _, err := NormalizeSlugs([]string{strings.Repeat("a", 63)}); err != nil {
+		t.Fatal(err)
+	}
 }

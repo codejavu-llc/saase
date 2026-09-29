@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -13,32 +14,35 @@ import (
 )
 
 type activeProbe struct {
-	ProviderID string
-	Kind       model.Signal
-	URL        string
-	Domain     bool
-	Statuses   []int
-	Reject     []string
-	Require    []string
+	ProviderID       string
+	Kind             model.Signal
+	URL              string
+	Domain           bool
+	Statuses         []int
+	Reject           []string
+	Require          []string
+	RejectLocations  []string
+	RejectAllHeaders []string
 }
 
 var activeProbes = []activeProbe{
 	{ProviderID: "slack", Kind: model.SignalTenant, URL: "https://%s.slack.com/", Reject: []string{"workspace doesn't exist", "workspace does not exist", "?redir="}},
 	{ProviderID: "atlassian", Kind: model.SignalTenant, URL: "https://%s.atlassian.net/", Reject: []string{"site not found", "cloud site is currently unavailable"}},
 	{ProviderID: "zendesk", Kind: model.SignalTenant, URL: "https://%s.zendesk.com/", Reject: []string{"help-center-closed", "no help center exists"}},
-	{ProviderID: "freshdesk", Kind: model.SignalTenant, URL: "https://%s.freshdesk.com/", Reject: []string{"domain not found", "portal not found"}},
+	{ProviderID: "freshdesk", Kind: model.SignalTenant, URL: "https://%s.freshdesk.com/", RejectLocations: []string{"https://www.freshworks.com/"}},
 	{ProviderID: "freshservice", Kind: model.SignalTenant, URL: "https://%s.freshservice.com/", Reject: []string{"domain not found", "account not found"}},
-	{ProviderID: "freshworks", Kind: model.SignalTenant, URL: "https://%s.freshworks.com/", Reject: []string{"domain not found", "account not found"}},
-	{ProviderID: "monday-com", Kind: model.SignalTenant, URL: "https://%s.monday.com/", Reject: []string{"account not found", "doesn't exist"}},
-	{ProviderID: "okta", Kind: model.SignalTenant, URL: "https://%s.okta.com/", Reject: []string{"404 not found", "org not found"}},
-	{ProviderID: "onelogin", Kind: model.SignalTenant, URL: "https://%s.onelogin.com/", Reject: []string{"account not found", "invalid subdomain"}},
+	{ProviderID: "freshworks", Kind: model.SignalTenant, URL: "https://%s.freshworks.com/", Reject: []string{"domain not found", "account not found"}, RejectLocations: []string{"https://www.freshworks.com/"}},
+	{ProviderID: "monday-com", Kind: model.SignalTenant, URL: "https://%s.monday.com/", RejectLocations: []string{"https://monday.com/slug_not_found"}},
+	{ProviderID: "okta", Kind: model.SignalTenant, URL: "https://%s.okta.com/", RejectAllHeaders: []string{"x-rate-limit-limit", "x-rate-limit-remaining", "x-rate-limit-reset"}},
+	{ProviderID: "onelogin", Kind: model.SignalTenant, URL: "https://%s.onelogin.com/", RejectLocations: []string{"https://app.onelogin.com/login"}},
 	{ProviderID: "salesforce", Kind: model.SignalTenant, URL: "https://%s.my.salesforce.com/", Reject: []string{"server not found", "domain is not available"}},
-	{ProviderID: "bamboohr", Kind: model.SignalTenant, URL: "https://%s.bamboohr.com/", Reject: []string{"company not found", "account not found"}},
+	{ProviderID: "bamboohr", Kind: model.SignalTenant, URL: "https://%s.bamboohr.com/home/", RejectLocations: []string{"https://www.bamboohr.com"}},
 	{ProviderID: "netlify", Kind: model.SignalTenant, URL: "https://%s.netlify.app/", Reject: []string{"not found - request id", "page not found"}},
 	{ProviderID: "activecampaign", Kind: model.SignalTenant, URL: "https://%s.activehosted.com/", Reject: []string{"account not found", "site not found"}},
 	{ProviderID: "calendly", Kind: model.SignalTenant, URL: "https://calendly.com/%s", Reject: []string{"page not found", "not found | calendly"}},
-	{ProviderID: "talentlms", Kind: model.SignalTenant, URL: "https://%s.talentlms.com/", Reject: []string{"domain not found", "portal not found"}},
-	{ProviderID: "sumo-logic", Kind: model.SignalTenant, URL: "https://%s.sumologic.com/", Reject: []string{"site not found", "account not found"}},
+	{ProviderID: "talentlms", Kind: model.SignalTenant, URL: "https://%s.talentlms.com/", RejectLocations: []string{"https://talentlms.com"}},
+	// Disabled until Sumo Logic tenant detection has a reliable existence check.
+	// {ProviderID: "sumo-logic", Kind: model.SignalTenant, URL: "https://%s.sumologic.com/", Reject: []string{"site not found", "account not found"}},
 	{ProviderID: "microsoft-365", Kind: model.SignalSSO, URL: "https://login.microsoftonline.com/%s/v2.0/.well-known/openid-configuration", Domain: true, Statuses: []int{200}, Require: []string{"authorization_endpoint"}, Reject: []string{"invalid_tenant"}},
 	{ProviderID: "google-workspace", Kind: model.SignalSSO, URL: "https://www.google.com/a/%s/ServiceLogin", Domain: true, Statuses: []int{302}},
 	{ProviderID: "jamf", Kind: model.SignalSSO, URL: "https://org-region-service.jamf.com/v2/region/domain/%s", Domain: true, Statuses: []int{200}, Reject: []string{"domain not found"}},
@@ -70,6 +74,12 @@ func (s *Scanner) activeFindings(ctx context.Context, t target.Target, selected 
 	var findings []model.Finding
 	var probeErrors []model.ProbeError
 	for _, probe := range activeProbes {
+		if t.IsSlugOnly() && probe.Domain {
+			continue
+		}
+		if !t.IsSlugOnly() && !probe.Domain && !s.cfg.IncludeSlugs {
+			continue
+		}
 		if len(selected) > 0 && !selected[probe.ProviderID] {
 			continue
 		}
@@ -85,14 +95,17 @@ func (s *Scanner) activeFindings(ctx context.Context, t target.Target, selected 
 			address := fmt.Sprintf(probe.URL, argument)
 			result, err := s.doHTTP(ctx, provider.ID, http.MethodGet, address)
 			if err != nil {
-				probeErrors = append(probeErrors, model.ProbeError{Target: t.Host, Detector: "active/" + provider.ID, Subject: address, Kind: "network", Message: err.Error()})
+				probeErrors = append(probeErrors, model.ProbeError{Target: t.Name(), Detector: "active/" + provider.ID, Subject: address, Kind: "network", Message: err.Error()})
 				continue
 			}
 			if result.StatusCode == http.StatusTooManyRequests {
-				probeErrors = append(probeErrors, model.ProbeError{Target: t.Host, Detector: "active/" + provider.ID, Subject: address, Kind: "rate_limited", Message: "provider returned HTTP 429"})
+				probeErrors = append(probeErrors, model.ProbeError{Target: t.Name(), Detector: "active/" + provider.ID, Subject: address, Kind: "rate_limited", Message: "provider returned HTTP 429"})
 				break
 			}
 			if result.StatusCode >= 400 || (len(probe.Statuses) > 0 && !allowedStatus(result.StatusCode, probe.Statuses)) {
+				continue
+			}
+			if probe.rejectsResponse(address, result) {
 				continue
 			}
 			haystack := strings.ToLower(result.Body + "\n" + result.Header.Get("Location"))
@@ -104,7 +117,7 @@ func (s *Scanner) activeFindings(ctx context.Context, t target.Target, selected 
 				confidence = model.ConfidenceHigh
 			}
 			found := model.Finding{
-				SchemaVersion: model.SchemaVersion, Target: t.Host, ProviderID: provider.ID, Provider: provider.Name,
+				SchemaVersion: model.SchemaVersion, Target: t.Name(), ProviderID: provider.ID, Provider: provider.Name,
 				Category: provider.Category, Description: provider.Description, Website: provider.Website, Impact: provider.Impact,
 				Tenant: address, Confidence: confidence, Detector: "active/tenant-v1", ObservedAt: time.Now().UTC(), LatencyMS: result.Latency.Milliseconds(),
 				RiskLead: "public_tenant_endpoint", Evidence: []model.Evidence{{Signal: probe.Kind, Subject: address, Value: fmt.Sprintf("HTTP %d", result.StatusCode)}},
@@ -114,6 +127,50 @@ func (s *Scanner) activeFindings(ctx context.Context, t target.Target, selected 
 		}
 	}
 	return findings, probeErrors
+}
+
+func (p activeProbe) rejectsResponse(address string, result httpResponse) bool {
+	if len(p.RejectAllHeaders) > 0 && hasAllHeaders(result.Header, p.RejectAllHeaders) {
+		return true
+	}
+	location := strings.TrimSpace(result.Header.Get("Location"))
+	if len(p.RejectLocations) == 0 || location == "" {
+		return false
+	}
+	base, err := url.Parse(address)
+	if err != nil {
+		return true
+	}
+	redirect, err := url.Parse(location)
+	if err != nil {
+		return true
+	}
+	redirect = base.ResolveReference(redirect)
+	for _, rejected := range p.RejectLocations {
+		other, err := url.Parse(rejected)
+		if err == nil && strings.EqualFold(redirect.Scheme, other.Scheme) && strings.EqualFold(redirect.Host, other.Host) &&
+			strings.TrimSuffix(redirect.Path, "/") == strings.TrimSuffix(other.Path, "/") && redirect.RawQuery == other.RawQuery {
+			return true
+		}
+	}
+	return false
+}
+
+// Header names are case-insensitive; presence counts even with an empty value.
+func hasAllHeaders(header http.Header, names []string) bool {
+	for _, name := range names {
+		found := false
+		for key := range header {
+			if strings.EqualFold(key, name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func allowedStatus(status int, allowed []int) bool {
