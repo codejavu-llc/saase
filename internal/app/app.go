@@ -181,8 +181,8 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		if err != nil {
 			return err
 		}
-		if !seen[item.Apex] {
-			normalized, seen[item.Apex] = append(normalized, item), true
+		if !seen[item.Host] {
+			normalized, seen[item.Host] = append(normalized, item), true
 		}
 	}
 	cfg := defaults

@@ -42,6 +42,9 @@ Release archives and the container image are produced for tagged releases.
 # Passive discovery (default)
 saase scan -d example.com
 
+# Scan a specific subdomain (including nested subdomains)
+saase scan -d subdomains.domain.com
+
 # JSONL for jq or another recon tool
 saase scan -d example.com --format jsonl | jq -r '.provider_id'
 
@@ -57,6 +60,8 @@ saase scan -d example.com --store recon.db
 saase diff --db recon.db --list
 saase diff --db recon.db
 ```
+
+Targets retain their full hostname: `domain.com`, `subdomains.domain.com`, and `other.domain.com` are scanned and cached separately. URLs are accepted and normalized to their hostname. DNS checks and domain-based SSO probes use that hostname; provider-specific DNS labels are checked beneath it. Tenant slug suggestions still come from the registrable parent domain, with `--slug` available for overrides.
 
 The old root-level flags still work during the v2 compatibility window:
 

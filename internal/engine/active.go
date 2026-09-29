@@ -79,17 +79,17 @@ func (s *Scanner) activeFindings(ctx context.Context, t target.Target, selected 
 		}
 		arguments := t.SlugCandidates
 		if probe.Domain {
-			arguments = []string{t.Apex}
+			arguments = []string{t.Host}
 		}
 		for _, argument := range arguments {
 			address := fmt.Sprintf(probe.URL, argument)
 			result, err := s.doHTTP(ctx, provider.ID, http.MethodGet, address)
 			if err != nil {
-				probeErrors = append(probeErrors, model.ProbeError{Target: t.Apex, Detector: "active/" + provider.ID, Subject: address, Kind: "network", Message: err.Error()})
+				probeErrors = append(probeErrors, model.ProbeError{Target: t.Host, Detector: "active/" + provider.ID, Subject: address, Kind: "network", Message: err.Error()})
 				continue
 			}
 			if result.StatusCode == http.StatusTooManyRequests {
-				probeErrors = append(probeErrors, model.ProbeError{Target: t.Apex, Detector: "active/" + provider.ID, Subject: address, Kind: "rate_limited", Message: "provider returned HTTP 429"})
+				probeErrors = append(probeErrors, model.ProbeError{Target: t.Host, Detector: "active/" + provider.ID, Subject: address, Kind: "rate_limited", Message: "provider returned HTTP 429"})
 				break
 			}
 			if result.StatusCode >= 400 || (len(probe.Statuses) > 0 && !allowedStatus(result.StatusCode, probe.Statuses)) {
@@ -104,7 +104,7 @@ func (s *Scanner) activeFindings(ctx context.Context, t target.Target, selected 
 				confidence = model.ConfidenceHigh
 			}
 			found := model.Finding{
-				SchemaVersion: model.SchemaVersion, Target: t.Apex, ProviderID: provider.ID, Provider: provider.Name,
+				SchemaVersion: model.SchemaVersion, Target: t.Host, ProviderID: provider.ID, Provider: provider.Name,
 				Category: provider.Category, Description: provider.Description, Website: provider.Website, Impact: provider.Impact,
 				Tenant: address, Confidence: confidence, Detector: "active/tenant-v1", ObservedAt: time.Now().UTC(), LatencyMS: result.Latency.Milliseconds(),
 				RiskLead: "public_tenant_endpoint", Evidence: []model.Evidence{{Signal: probe.Kind, Subject: address, Value: fmt.Sprintf("HTTP %d", result.StatusCode)}},

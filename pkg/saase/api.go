@@ -87,9 +87,9 @@ func (s *Scanner) Scan(ctx context.Context, domains, providers []string) (ScanRe
 		if err != nil {
 			return ScanReport{}, err
 		}
-		if !seen[item.Apex] {
+		if !seen[item.Host] {
 			targets = append(targets, item)
-			seen[item.Apex] = true
+			seen[item.Host] = true
 		}
 	}
 	return s.engine.Scan(ctx, targets, providers)

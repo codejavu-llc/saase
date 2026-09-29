@@ -38,9 +38,9 @@ func Normalize(raw string, overrides Overrides) (Target, error) {
 		}
 		host = u.Hostname()
 	} else {
-		host = strings.TrimSuffix(strings.Split(strings.Split(host, "/")[0], ":")[0], ".")
+		host = strings.Split(strings.Split(host, "/")[0], ":")[0]
 	}
-	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
 	if net.ParseIP(host) != nil {
 		return Target{}, fmt.Errorf("target %q is an IP address; a domain is required", original)
 	}

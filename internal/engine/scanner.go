@@ -150,7 +150,7 @@ func (s *Scanner) Scan(ctx context.Context, targets []target.Target, providerSel
 		Active: s.cfg.Active, InsecureTLS: s.cfg.InsecureTLS, Targets: len(targets), ProviderRules: len(s.catalog.Providers()),
 	}}
 	for _, item := range targets {
-		report.Metadata.TargetNames = append(report.Metadata.TargetNames, item.Apex)
+		report.Metadata.TargetNames = append(report.Metadata.TargetNames, item.Host)
 	}
 	startedMetadata := report.Metadata
 	startedMetadata.TargetNames = append([]string(nil), report.Metadata.TargetNames...)
@@ -219,7 +219,7 @@ type cachedTargetResult struct {
 
 func (s *Scanner) scanTargetCached(ctx context.Context, t target.Target, selected map[string]bool) ([]model.Finding, []model.ProbeError) {
 	key := s.cacheKey(t, selected)
-	version := catalog.CatalogVersion + ":" + s.catalog.Fingerprint() + ":engine-v2"
+	version := catalog.CatalogVersion + ":" + s.catalog.Fingerprint() + ":engine-v3"
 	if s.cache != nil && !s.cfg.DisableCache {
 		if payload, ok, err := s.cache.GetCache(ctx, key, version); err == nil && ok {
 			var cached cachedTargetResult
@@ -245,7 +245,7 @@ func (s *Scanner) cacheKey(t target.Target, selected map[string]bool) string {
 		providers = append(providers, provider)
 	}
 	sort.Strings(providers)
-	value := strings.Join([]string{t.Apex, strings.Join(t.SlugCandidates, ","), strings.Join(providers, ","), s.cfg.Profile,
+	value := strings.Join([]string{t.Host, strings.Join(t.SlugCandidates, ","), strings.Join(providers, ","), s.cfg.Profile,
 		fmt.Sprint(s.cfg.Active), fmt.Sprint(s.cfg.InsecureTLS), fmt.Sprint(s.cfg.ShowSensitiveEvidence),
 		fmt.Sprintf("%d:%d:%d", len(s.catalog.Providers()), len(s.catalog.TXT), len(s.catalog.DNS))}, "|")
 	sum := sha256.Sum256([]byte(value))
@@ -266,9 +266,9 @@ func (s *Scanner) passiveFindings(ctx context.Context, t target.Target, selected
 	var findings []model.Finding
 	var probeErrors []model.ProbeError
 
-	txt, err := s.lookupTXT(ctx, t.Apex)
+	txt, err := s.lookupTXT(ctx, t.Host)
 	if err != nil && !isDNSNotFound(err) {
-		probeErrors = append(probeErrors, dnsError(t.Apex, "dns/txt", t.Apex, err))
+		probeErrors = append(probeErrors, dnsError(t.Host, "dns/txt", t.Host, err))
 	}
 	for _, record := range txt {
 		for _, rule := range s.catalog.TXT {
@@ -282,16 +282,16 @@ func (s *Scanner) passiveFindings(ctx context.Context, t target.Target, selected
 				signal, confidence = model.SignalSPF, model.ConfidenceMedium
 			}
 			found := s.finding(t, provider, confidence, "passive/txt-v1", model.Evidence{
-				Signal: signal, Subject: t.Apex, Value: s.safeTXT(record), Reference: rule.Reference, Sensitive: rule.MatchType != "spf_include",
+				Signal: signal, Subject: t.Host, Value: s.safeTXT(record), Reference: rule.Reference, Sensitive: rule.MatchType != "spf_include",
 			})
 			found.RiskLead = "verification_record_review"
 			findings = append(findings, s.observeFinding(found))
 		}
 	}
 
-	mxRecords, err := s.lookupMX(ctx, t.Apex)
+	mxRecords, err := s.lookupMX(ctx, t.Host)
 	if err != nil && !isDNSNotFound(err) {
-		probeErrors = append(probeErrors, dnsError(t.Apex, "dns/mx", t.Apex, err))
+		probeErrors = append(probeErrors, dnsError(t.Host, "dns/mx", t.Host, err))
 	}
 	for _, mx := range mxRecords {
 		for _, rule := range s.catalog.DNS {
@@ -299,25 +299,25 @@ func (s *Scanner) passiveFindings(ctx context.Context, t target.Target, selected
 			if !ok || (len(selected) > 0 && !selected[provider.ID]) || !matchesAnyDNS(mx.Host, rule.MXTargets) {
 				continue
 			}
-			found := s.finding(t, provider, model.ConfidenceMedium, "passive/mx-v1", model.Evidence{Signal: model.SignalMX, Subject: t.Apex, Value: strings.TrimSuffix(mx.Host, "."), Reference: rule.Reference})
+			found := s.finding(t, provider, model.ConfidenceMedium, "passive/mx-v1", model.Evidence{Signal: model.SignalMX, Subject: t.Host, Value: strings.TrimSuffix(mx.Host, "."), Reference: rule.Reference})
 			findings = append(findings, s.observeFinding(found))
 		}
 	}
 
-	nsNames := map[string]bool{t.Apex: true}
+	nsNames := map[string]bool{t.Host: true}
 	for _, rule := range s.catalog.DNS {
 		if len(rule.NSTargets) == 0 {
 			continue
 		}
 		for _, sub := range rule.SubdomainsToCheck {
-			nsNames[sub+"."+t.Apex] = true
+			nsNames[sub+"."+t.Host] = true
 		}
 	}
 	for name := range nsNames {
 		nsRecords, lookupErr := s.lookupNS(ctx, name)
 		if lookupErr != nil {
-			if !isDNSNotFound(lookupErr) && name == t.Apex {
-				probeErrors = append(probeErrors, dnsError(t.Apex, "dns/ns", name, lookupErr))
+			if !isDNSNotFound(lookupErr) && name == t.Host {
+				probeErrors = append(probeErrors, dnsError(t.Host, "dns/ns", name, lookupErr))
 			}
 			continue
 		}
@@ -333,22 +333,22 @@ func (s *Scanner) passiveFindings(ctx context.Context, t target.Target, selected
 		}
 	}
 
-	// The registrable domain can itself be a provider CNAME (for example,
+	// The supplied hostname can itself be a provider CNAME (for example,
 	// hosted sites), so inspect it in addition to provider-specific labels.
-	hosts := map[string]bool{t.Apex: true}
+	hosts := map[string]bool{t.Host: true}
 	for _, rule := range s.catalog.DNS {
 		provider, ok := s.catalog.Provider(rule.Name)
 		if !ok || (len(selected) > 0 && !selected[provider.ID]) {
 			continue
 		}
 		for _, sub := range rule.SubdomainsToCheck {
-			hosts[sub+"."+t.Apex] = true
+			hosts[sub+"."+t.Host] = true
 		}
 	}
 	findings = append(findings, s.cnameFindings(ctx, t, selected, hosts, "passive/cname-v1", "")...)
 
 	for _, service := range [][2]string{{"sip", "tcp"}, {"sip", "tls"}, {"autodiscover", "tcp"}, {"xmpp-server", "tcp"}, {"ldap", "tcp"}} {
-		_, records, lookupErr := s.lookupSRV(ctx, service[0], service[1], t.Apex)
+		_, records, lookupErr := s.lookupSRV(ctx, service[0], service[1], t.Host)
 		if lookupErr != nil {
 			continue
 		}
@@ -358,7 +358,7 @@ func (s *Scanner) passiveFindings(ctx context.Context, t target.Target, selected
 				if !ok || (len(selected) > 0 && !selected[provider.ID]) || !matchesAnyDNS(record.Target, rule.CNAMETargets) {
 					continue
 				}
-				found := s.finding(t, provider, model.ConfidenceMedium, "passive/srv-v1", model.Evidence{Signal: model.SignalSRV, Subject: "_" + service[0] + "._" + service[1] + "." + t.Apex, Value: strings.TrimSuffix(record.Target, "."), Reference: rule.Reference})
+				found := s.finding(t, provider, model.ConfidenceMedium, "passive/srv-v1", model.Evidence{Signal: model.SignalSRV, Subject: "_" + service[0] + "._" + service[1] + "." + t.Host, Value: strings.TrimSuffix(record.Target, "."), Reference: rule.Reference})
 				findings = append(findings, s.observeFinding(found))
 			}
 		}
@@ -412,7 +412,7 @@ func (s *Scanner) cnameFindings(ctx context.Context, t target.Target, selected m
 }
 
 func (s *Scanner) finding(t target.Target, p catalog.Provider, confidence model.Confidence, detector string, evidence model.Evidence) model.Finding {
-	return model.Finding{SchemaVersion: model.SchemaVersion, Target: t.Apex, ProviderID: p.ID, Provider: p.Name, Category: p.Category,
+	return model.Finding{SchemaVersion: model.SchemaVersion, Target: t.Host, ProviderID: p.ID, Provider: p.Name, Category: p.Category,
 		Description: p.Description, Website: p.Website, Confidence: confidence, Impact: p.Impact, Evidence: []model.Evidence{evidence},
 		Detector: detector, ObservedAt: time.Now().UTC()}
 }

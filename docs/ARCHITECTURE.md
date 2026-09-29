@@ -28,7 +28,7 @@ evidence aggregation ────────────────► determi
 
 ## Boundaries
 
-- `internal/target` accepts domains and URLs, rejects IPs and malformed names, converts IDNs, and uses the public suffix list rather than taking the first label.
+- `internal/target` accepts domains, subdomains, and URLs, rejects IPs and malformed names, and converts IDNs. Scans, target deduplication, and cache entries use the full normalized hostname; the public suffix list identifies the registrable parent domain for organization and tenant slug suggestions.
 - `internal/catalog` parses and validates embedded or user-supplied YAML. DNS suffix matches require a label boundary, preventing `evilokta.com` from matching `okta.com`; SPF matches require an exact `include:` mechanism domain rather than a substring.
 - `internal/engine` owns concurrency, cancellation, timeouts, retries, per-provider pacing, response limits, safe redirects, evidence aggregation, and detector execution.
 - `internal/model` is the schema source of truth. Every serialized finding declares schema version `2.0`.

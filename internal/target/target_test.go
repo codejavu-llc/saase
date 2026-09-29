@@ -4,11 +4,15 @@ import "testing"
 
 func TestNormalize(t *testing.T) {
 	tests := []struct {
-		name, input, apex, slug string
+		name, input, host, apex, slug string
 	}{
-		{"apex", "Example.COM.", "example.com", "example"},
-		{"subdomain and public suffix", "https://www.acme.co.uk:443/path", "acme.co.uk", "acme"},
-		{"idn", "bücher.de", "xn--bcher-kva.de", "xn-bcher-kva"},
+		{"apex", "Example.COM.", "example.com", "example.com", "example"},
+		{"subdomain", "subdomains.domain.com", "subdomains.domain.com", "domain.com", "domain"},
+		{"nested subdomain", "One.Two.Example.COM.", "one.two.example.com", "example.com", "example"},
+		{"subdomain and public suffix", "https://www.acme.co.uk:443/path", "www.acme.co.uk", "acme.co.uk", "acme"},
+		{"absolute URL hostname", "https://Sub.Example.com.:443/path", "sub.example.com", "example.com", "example"},
+		{"idn", "bücher.de", "xn--bcher-kva.de", "xn--bcher-kva.de", "xn-bcher-kva"},
+		{"idn subdomain", "shop.bücher.de", "shop.xn--bcher-kva.de", "xn--bcher-kva.de", "xn-bcher-kva"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -18,6 +22,9 @@ func TestNormalize(t *testing.T) {
 			}
 			if got.Apex != test.apex {
 				t.Fatalf("apex = %q, want %q", got.Apex, test.apex)
+			}
+			if got.Host != test.host {
+				t.Fatalf("host = %q, want %q", got.Host, test.host)
 			}
 			found := false
 			for _, slug := range got.SlugCandidates {
@@ -53,7 +60,7 @@ func TestNormalizeOverridesAndErrors(t *testing.T) {
 		t.Fatalf("custom slug missing: %v", got.SlugCandidates)
 	}
 
-	for _, input := range []string{"", "localhost", "127.0.0.1", "bad_domain.com", "https://"} {
+	for _, input := range []string{"", "localhost", "127.0.0.1", "bad_domain.com", "https://", "example.com..", "sub..example.com"} {
 		if _, err := Normalize(input, Overrides{}); err == nil {
 			t.Errorf("Normalize(%q) unexpectedly succeeded", input)
 		}

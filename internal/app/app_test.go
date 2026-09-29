@@ -80,3 +80,17 @@ func TestDiffCommands(t *testing.T) {
 		t.Fatalf("stderr=%q", stderr.String())
 	}
 }
+
+func TestScanSubdomainScope(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	// The started event exposes normalized scope even when scanning is cancelled.
+	Run(ctx, []string{"scan", "--no-color", "-d", "example.com,one.example.com,two.example.com,https://ONE.example.com.:443/path"}, strings.NewReader(""), &stdout, &stderr)
+	if !strings.Contains(stdout.String(), "example.com, one.example.com, two.example.com") {
+		t.Fatalf("subdomains missing from scope: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "TARGETS 3") {
+		t.Fatalf("equivalent hostname was not deduplicated: %s", stdout.String())
+	}
+}
