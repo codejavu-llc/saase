@@ -24,7 +24,8 @@ type Config struct {
 	Active                bool
 	IncludeSlugs          bool // Include slug-based HTTP probes when scanning domains.
 	Concurrency           int
-	DNSConcurrency        int // Maximum concurrent DNS lookups; zero inherits Concurrency.
+	TrackDNSProgress      bool // Emit optional DNS lookup progress events.
+	DNSConcurrency        int  // Maximum concurrent DNS lookups; zero inherits Concurrency.
 	RateLimit             float64
 	Timeout               time.Duration
 	Retries               int
@@ -180,6 +181,15 @@ func (s *Scanner) Scan(ctx context.Context, targets []target.Target, providerSel
 	startedMetadata := report.Metadata
 	startedMetadata.TargetNames = append([]string(nil), report.Metadata.TargetNames...)
 	s.emit(model.ScanEvent{Type: model.ScanEventStarted, Metadata: &startedMetadata})
+	var tracker *dnsProgressTracker
+	if s.cfg.TrackDNSProgress {
+		tracker = &dnsProgressTracker{emit: s.emit}
+		for _, item := range targets {
+			tracker.state.Total += s.plannedDNSLookups(item, selected)
+		}
+		ctx = context.WithValue(ctx, dnsProgressKey{}, tracker)
+		tracker.update(0, 0, 0, false, false)
+	}
 
 	type targetResult struct {
 		findings []model.Finding
@@ -230,6 +240,9 @@ func (s *Scanner) Scan(ctx context.Context, targets []target.Target, providerSel
 	report.Metadata.DurationMS = report.Metadata.Duration.Milliseconds()
 	finishedMetadata := report.Metadata
 	finishedMetadata.TargetNames = append([]string(nil), report.Metadata.TargetNames...)
+	if tracker != nil {
+		tracker.update(0, 0, 0, true, ctx.Err() != nil)
+	}
 	s.emit(model.ScanEvent{Type: model.ScanEventFinished, Metadata: &finishedMetadata})
 	if ctx.Err() != nil && len(report.Findings) == 0 {
 		return report, ctx.Err()
@@ -251,6 +264,9 @@ func (s *Scanner) scanTargetCached(ctx context.Context, t target.Target, selecte
 			if json.Unmarshal(payload, &cached) == nil {
 				for _, finding := range cached.Findings {
 					s.observeFinding(finding)
+				}
+				if s.cfg.TrackDNSProgress {
+					updateDNSProgress(ctx, 0, 0, s.plannedDNSLookups(t, selected))
 				}
 				return cached.Findings, cached.Errors
 			}
@@ -338,15 +354,7 @@ func (s *Scanner) passiveFindings(ctx context.Context, t target.Target, selected
 		}
 	}
 
-	nsNames := map[string]bool{t.Host: true}
-	for _, rule := range s.catalog.DNS {
-		if len(rule.NSTargets) == 0 {
-			continue
-		}
-		for _, sub := range rule.SubdomainsToCheck {
-			nsNames[sub+"."+t.Host] = true
-		}
-	}
+	nsNames := s.nsNames(t.Host)
 	for name := range nsNames {
 		nsRecords, lookupErr := s.lookupNS(ctx, name)
 		if lookupErr != nil {
@@ -369,16 +377,7 @@ func (s *Scanner) passiveFindings(ctx context.Context, t target.Target, selected
 
 	// The supplied hostname can itself be a provider CNAME (for example,
 	// hosted sites), so inspect it in addition to provider-specific labels.
-	hosts := map[string]bool{t.Host: true}
-	for _, rule := range s.catalog.DNS {
-		provider, ok := s.catalog.Provider(rule.Name)
-		if !ok || (len(selected) > 0 && !selected[provider.ID]) {
-			continue
-		}
-		for _, sub := range rule.SubdomainsToCheck {
-			hosts[sub+"."+t.Host] = true
-		}
-	}
+	hosts := s.cnameNames(t.Host, selected)
 	findings = append(findings, s.cnameFindings(ctx, t, selected, hosts, "passive/cname-v1", "")...)
 
 	for _, service := range [][2]string{{"sip", "tcp"}, {"sip", "tls"}, {"autodiscover", "tcp"}, {"xmpp-server", "tcp"}, {"ldap", "tcp"}} {
@@ -422,6 +421,7 @@ func (s *Scanner) cnameFindings(ctx context.Context, t target.Target, selected m
 		if result.err != nil || catalog.DNSNameMatches(result.cname, result.host) {
 			continue
 		}
+		updateDNSProgress(ctx, 1, 0, 0)
 		dangling := false
 		if _, hostErr := s.lookupHost(ctx, strings.TrimSuffix(result.cname, ".")); hostErr != nil && isDNSNotFound(hostErr) {
 			dangling = true
@@ -566,6 +566,7 @@ func (s *Scanner) lookupTXT(ctx context.Context, name string) ([]string, error) 
 		return nil, err
 	}
 	defer s.release()
+	defer updateDNSProgress(ctx, 0, 1, 0)
 	lookupCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 	return s.dns.LookupTXT(lookupCtx, name)
@@ -575,6 +576,7 @@ func (s *Scanner) lookupCNAME(ctx context.Context, name string) (string, error) 
 		return "", err
 	}
 	defer s.release()
+	defer updateDNSProgress(ctx, 0, 1, 0)
 	lookupCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 	return s.dns.LookupCNAME(lookupCtx, name)
@@ -584,6 +586,7 @@ func (s *Scanner) lookupMX(ctx context.Context, name string) ([]*net.MX, error) 
 		return nil, err
 	}
 	defer s.release()
+	defer updateDNSProgress(ctx, 0, 1, 0)
 	lookupCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 	return s.dns.LookupMX(lookupCtx, name)
@@ -593,6 +596,7 @@ func (s *Scanner) lookupNS(ctx context.Context, name string) ([]*net.NS, error) 
 		return nil, err
 	}
 	defer s.release()
+	defer updateDNSProgress(ctx, 0, 1, 0)
 	lookupCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 	return s.dns.LookupNS(lookupCtx, name)
@@ -602,6 +606,7 @@ func (s *Scanner) lookupSRV(ctx context.Context, service, proto, name string) (s
 		return "", nil, err
 	}
 	defer s.release()
+	defer updateDNSProgress(ctx, 0, 1, 0)
 	lookupCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 	return s.dns.LookupSRV(lookupCtx, service, proto, name)
@@ -611,6 +616,7 @@ func (s *Scanner) lookupHost(ctx context.Context, name string) ([]string, error)
 		return nil, err
 	}
 	defer s.release()
+	defer updateDNSProgress(ctx, 0, 1, 0)
 	lookupCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 	return s.dns.LookupHost(lookupCtx, name)

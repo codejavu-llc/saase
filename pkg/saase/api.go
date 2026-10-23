@@ -19,6 +19,7 @@ type Evidence = model.Evidence
 type ProbeError = model.ProbeError
 type ScanReport = model.ScanReport
 type ScanMetadata = model.ScanMetadata
+type DNSProgress = model.DNSProgress
 type ScanEvent = model.ScanEvent
 type ScanEventType = model.ScanEventType
 type Confidence = model.Confidence
@@ -30,22 +31,23 @@ type TargetOverrides = target.Overrides
 const SchemaVersion = model.SchemaVersion
 
 const (
-	ScanEventStarted    = model.ScanEventStarted
-	ScanEventFinding    = model.ScanEventFinding
-	ScanEventFinished   = model.ScanEventFinished
-	ConfidenceUnknown   = model.ConfidenceUnknown
-	ConfidenceLow       = model.ConfidenceLow
-	ConfidenceMedium    = model.ConfidenceMedium
-	ConfidenceHigh      = model.ConfidenceHigh
-	ConfidenceConfirmed = model.ConfidenceConfirmed
-	SignalTXT           = model.SignalTXT
-	SignalSPF           = model.SignalSPF
-	SignalCNAME         = model.SignalCNAME
-	SignalMX            = model.SignalMX
-	SignalNS            = model.SignalNS
-	SignalSRV           = model.SignalSRV
-	SignalTenant        = model.SignalTenant
-	SignalSSO           = model.SignalSSO
+	ScanEventDNSProgress = model.ScanEventDNSProgress
+	ScanEventStarted     = model.ScanEventStarted
+	ScanEventFinding     = model.ScanEventFinding
+	ScanEventFinished    = model.ScanEventFinished
+	ConfidenceUnknown    = model.ConfidenceUnknown
+	ConfidenceLow        = model.ConfidenceLow
+	ConfidenceMedium     = model.ConfidenceMedium
+	ConfidenceHigh       = model.ConfidenceHigh
+	ConfidenceConfirmed  = model.ConfidenceConfirmed
+	SignalTXT            = model.SignalTXT
+	SignalSPF            = model.SignalSPF
+	SignalCNAME          = model.SignalCNAME
+	SignalMX             = model.SignalMX
+	SignalNS             = model.SignalNS
+	SignalSRV            = model.SignalSRV
+	SignalTenant         = model.SignalTenant
+	SignalSSO            = model.SignalSSO
 )
 
 type Scanner struct {

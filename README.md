@@ -116,6 +116,20 @@ saase scan -l domains.txt --resolvers-file resolvers.txt --concurrency 20 --dns-
 
 `--dns-concurrency` limits DNS lookup operations across all domains and resolvers, including TXT, MX, NS, CNAME, SRV, and address checks. Values are 1–500, or 0 (the default) to inherit `--concurrency`, preserving the default of 20 simultaneous lookups. It applies to both system and custom resolvers, with or without a proxy. A lookup can generate multiple wire queries, so this is not a packet limit or a queries-per-second limit. `--rate-limit` applies only to HTTP probes.
 
+Use `--progress` to see DNS work remaining while scanning, including when saving JSON:
+
+```bash
+saase scan -l domains.txt --resolvers-file resolvers.txt --dns-concurrency 5 --progress --format json -o results.json
+```
+
+Progress goes to stderr at most once per second as lookups finish, plus initial and final updates:
+
+```text
+[DNS scanning] 100 completed | 215 remaining | 0 skipped (cache) | 315 planned lookups
+```
+
+These are DNS **lookup operations**, not individual packets or HTTP requests. Remaining includes queued and running lookups across all targets. Extra address checks discovered through CNAME results increase the plan; cached targets are counted as skipped. Failed lookups count as completed attempts, and interrupted scans are labeled accordingly. The option does not change JSON, JSONL, CSV, or saved report contents.
+
 ## Profiles and safety
 
 | Profile | Network behavior |
@@ -159,6 +173,7 @@ Output:
       --format FORMAT          text, json, jsonl, or csv
   -o FILE                     mirror stdout results to a file
   -v, --verbose               include evidence and print probe errors to stderr
+      --progress              show completed/remaining DNS lookups on stderr
       --silent                print target, provider ID, and endpoint only
       --show-sensitive-evidence
                               do not redact verification tokens

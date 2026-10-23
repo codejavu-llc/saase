@@ -16,6 +16,7 @@ import (
 
 	"github.com/codejavu-llc/saase/v2/internal/catalog"
 	"github.com/codejavu-llc/saase/v2/internal/engine"
+	"github.com/codejavu-llc/saase/v2/internal/model"
 	"github.com/codejavu-llc/saase/v2/internal/output"
 	"github.com/codejavu-llc/saase/v2/internal/store"
 	"github.com/codejavu-llc/saase/v2/internal/target"
@@ -90,7 +91,7 @@ type scanOptions struct {
 	organization, outputFile, format, profile, proxy, rulesDir, storePath string
 	resolversFile                                                         string
 	active, verbose, silent, noColor, insecure, sensitive, forceStdin     bool
-	noCache, includeSlugs                                                 bool
+	noCache, includeSlugs, progress                                       bool
 	timeout, cacheTTL                                                     time.Duration
 	retries, concurrency, dnsConcurrency                                  int
 	rateLimit                                                             float64
@@ -124,6 +125,7 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	set.BoolVar(&options.verbose, "v", false, "show evidence and probe errors")
 	set.BoolVar(&options.verbose, "verbose", false, "show evidence and probe errors")
 	set.BoolVar(&options.silent, "silent", false, "print pipe-friendly findings only")
+	set.BoolVar(&options.progress, "progress", false, "show completed and remaining DNS lookups on stderr")
 	set.BoolVar(&options.noColor, "no-color", false, "disable ANSI color")
 	set.BoolVar(&options.insecure, "insecure", false, "disable TLS verification (recorded in metadata)")
 	set.BoolVar(&options.sensitive, "show-sensitive-evidence", false, "do not redact verification tokens")
@@ -214,6 +216,7 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	}
 	cfg.Profile, cfg.Active, cfg.Concurrency, cfg.RateLimit = options.profile, options.active, options.concurrency, options.rateLimit
 	cfg.DNSConcurrency = options.dnsConcurrency
+	cfg.TrackDNSProgress = options.progress
 	cfg.IncludeSlugs = options.includeSlugs || (len(options.domains) > 0 && len(options.slugs) > 0)
 	cfg.Timeout, cfg.Retries, cfg.Proxy, cfg.InsecureTLS = options.timeout, options.retries, options.proxy, options.insecure
 	cfg.ShowSensitiveEvidence = options.sensitive
@@ -236,8 +239,15 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	var live *output.LiveWriter
 	if options.format == "" || strings.EqualFold(options.format, "text") {
 		live = output.NewLiveWriter(stdout, renderOptions)
-		scanner.SetEventHandler(live.Handle)
 	}
+	scanner.SetEventHandler(func(event model.ScanEvent) {
+		if live != nil {
+			live.Handle(event)
+		}
+		if options.progress && event.DNSProgress != nil {
+			writeDNSProgress(stderr, *event.DNSProgress)
+		}
+	})
 	report, scanErr := scanner.Scan(ctx, normalized, options.providers)
 	if live != nil {
 		if err := live.Finish(report); err != nil {
@@ -490,10 +500,22 @@ Usage:
 Legacy scan flags (-d, -s, -c, -o, -v, -x) continue to work without the "scan" command.`)
 }
 func writeScanUsage(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "Progress: --progress shows completed and remaining DNS lookups on stderr.")
 	_, _ = fmt.Fprintln(w, "DNS concurrency: --dns-concurrency N limits simultaneous DNS lookups (0 inherits --concurrency, default 20).")
 	_, _ = fmt.Fprintln(w, "List scanning: saase scan -l domains.txt [--resolvers-file resolvers.txt] [--proxy socks5://127.0.0.1:1080]")
 	_, _ = fmt.Fprintln(w, "Usage: saase scan -d example.com [--active] [--include-slugs] [--format text|json|jsonl|csv]")
 	_, _ = fmt.Fprintln(w, "       saase scan --slug acme --active [-s slack] [--format text|json|jsonl|csv]")
 	_, _ = fmt.Fprintln(w, "Domain scans skip slug-based services unless --include-slugs or --slug NAME is supplied; -s selects providers.")
 	_, _ = fmt.Fprintln(w, "--slug is repeatable or comma-separated; without a domain, only slug-based HTTP services are checked.")
+}
+
+func writeDNSProgress(w io.Writer, p model.DNSProgress) {
+	status := "scanning"
+	if p.Finished {
+		status = "finished"
+	}
+	if p.Interrupted {
+		status = "interrupted"
+	}
+	_, _ = fmt.Fprintf(w, "[DNS %s] %d completed | %d remaining | %d skipped (cache) | %d planned lookups\n", status, p.Completed, p.Remaining, p.Skipped, p.Total)
 }

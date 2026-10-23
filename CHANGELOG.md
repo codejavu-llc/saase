@@ -2,6 +2,8 @@
 
 ## 2.0.0 - Unreleased
 
+- Added `--progress` to show completed, remaining, and cached/skipped DNS lookups on stderr, including dynamically discovered CNAME address checks.
+
 - Added `--dns-concurrency` to limit DNS lookups independently of domain workers; defaults to inheriting `--concurrency`.
 
 - Added `--resolvers-file` for domain-list and stdin scans, with random resolver selection per target and optional DNS-over-TCP through SOCKS5 or HTTP CONNECT proxies. Included an example `resolvers.txt`.

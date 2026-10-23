@@ -185,3 +185,29 @@ func TestDNSConcurrencyFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestDNSProgressOutput(t *testing.T) {
+	var stderr bytes.Buffer
+	writeDNSProgress(&stderr, model.DNSProgress{Total: 210, Completed: 100, Remaining: 5, Skipped: 105})
+	if got := stderr.String(); !strings.Contains(got, "100 completed | 5 remaining | 105 skipped (cache) | 210 planned lookups") {
+		t.Fatalf("progress: %s", got)
+	}
+	stderr.Reset()
+	writeDNSProgress(&stderr, model.DNSProgress{Finished: true, Interrupted: true, Remaining: 10})
+	if !strings.Contains(stderr.String(), "[DNS interrupted]") {
+		t.Fatalf("progress: %s", &stderr)
+	}
+}
+
+func TestDNSProgressKeepsJSONClean(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	_ = Run(ctx, []string{"scan", "-d", "example.com", "--progress", "--format", "json"}, strings.NewReader(""), &stdout, &stderr)
+	if strings.Contains(stdout.String(), "[DNS") {
+		t.Fatal("progress contaminated stdout")
+	}
+	if !strings.Contains(stderr.String(), "[DNS interrupted]") || !strings.Contains(stderr.String(), "remaining") {
+		t.Fatalf("missing progress: %s", &stderr)
+	}
+}

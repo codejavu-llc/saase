@@ -101,17 +101,29 @@ type ScanReport struct {
 type ScanEventType string
 
 const (
-	ScanEventStarted  ScanEventType = "scan_started"
-	ScanEventFinding  ScanEventType = "finding_observed"
-	ScanEventFinished ScanEventType = "scan_finished"
+	ScanEventDNSProgress ScanEventType = "dns_progress"
+	ScanEventStarted     ScanEventType = "scan_started"
+	ScanEventFinding     ScanEventType = "finding_observed"
+	ScanEventFinished    ScanEventType = "scan_finished"
 )
 
 // ScanEvent reports scan progress as it happens. Finding events are emitted
 // only after a detector's positive matcher accepts the evidence.
+// DNSProgress counts resolver lookup operations, not wire packets or retries.
+type DNSProgress struct {
+	Total       int  `json:"total"`
+	Completed   int  `json:"completed"`
+	Skipped     int  `json:"skipped"`
+	Remaining   int  `json:"remaining"`
+	Finished    bool `json:"finished"`
+	Interrupted bool `json:"interrupted"`
+}
+
 type ScanEvent struct {
-	Type     ScanEventType `json:"type"`
-	Metadata *ScanMetadata `json:"metadata,omitempty"`
-	Finding  *Finding      `json:"finding,omitempty"`
+	DNSProgress *DNSProgress  `json:"dns_progress,omitempty"`
+	Type        ScanEventType `json:"type"`
+	Metadata    *ScanMetadata `json:"metadata,omitempty"`
+	Finding     *Finding      `json:"finding,omitempty"`
 }
 
 type StoredScan struct {
