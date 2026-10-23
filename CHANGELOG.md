@@ -2,6 +2,8 @@
 
 ## 2.0.0 - Unreleased
 
+- Added `--dns-concurrency` to limit DNS lookups independently of domain workers; defaults to inheriting `--concurrency`.
+
 - Added `--resolvers-file` for domain-list and stdin scans, with random resolver selection per target and optional DNS-over-TCP through SOCKS5 or HTTP CONNECT proxies. Included an example `resolvers.txt`.
 
 - Domain scans now skip slug-based HTTP probes by default; `--include-slugs` or an explicit `--slug` enables them. `-s` remains the provider filter.

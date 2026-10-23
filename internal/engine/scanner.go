@@ -24,6 +24,7 @@ type Config struct {
 	Active                bool
 	IncludeSlugs          bool // Include slug-based HTTP probes when scanning domains.
 	Concurrency           int
+	DNSConcurrency        int // Maximum concurrent DNS lookups; zero inherits Concurrency.
 	RateLimit             float64
 	Timeout               time.Duration
 	Retries               int
@@ -68,6 +69,12 @@ func New(cfg Config, providerCatalog *catalog.Catalog) (*Scanner, error) {
 	if cfg.Concurrency < 1 || cfg.Concurrency > 500 {
 		return nil, fmt.Errorf("concurrency must be between 1 and 500")
 	}
+	if cfg.DNSConcurrency < 0 || cfg.DNSConcurrency > 500 {
+		return nil, fmt.Errorf("DNS concurrency must be between 0 and 500 (0 inherits concurrency)")
+	}
+	if cfg.DNSConcurrency == 0 {
+		cfg.DNSConcurrency = cfg.Concurrency
+	}
 	if cfg.Timeout <= 0 || cfg.Timeout > 5*time.Minute {
 		return nil, fmt.Errorf("timeout must be between 1ns and 5m")
 	}
@@ -105,7 +112,7 @@ func New(cfg Config, providerCatalog *catalog.Catalog) (*Scanner, error) {
 			return nil, err
 		}
 	}
-	return &Scanner{cfg: cfg, catalog: providerCatalog, dns: resolver, http: client, rate: newRateGate(cfg.RateLimit), sem: make(chan struct{}, cfg.Concurrency)}, nil
+	return &Scanner{cfg: cfg, catalog: providerCatalog, dns: resolver, http: client, rate: newRateGate(cfg.RateLimit), sem: make(chan struct{}, cfg.DNSConcurrency)}, nil
 }
 
 func (s *Scanner) SetResolver(resolver DNSResolver) {

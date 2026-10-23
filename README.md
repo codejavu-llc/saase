@@ -108,6 +108,14 @@ saase -d example.com -s slack -v -x http://127.0.0.1:8080
 
 The default text view streams each accepted finding as soon as it is observed, then closes with the aggregated scan summary. It uses a Unicode operator-console layout and enables ANSI color only on an interactive terminal. `--no-color` keeps the layout without escape sequences. `--silent` also streams unique tab-separated matches immediately, while JSON, JSONL, CSV, and files written with `-o` remain deterministic final reports without terminal decoration.
 
+Control DNS concurrency separately from domain workers:
+
+```bash
+saase scan -l domains.txt --resolvers-file resolvers.txt --concurrency 20 --dns-concurrency 5
+```
+
+`--dns-concurrency` limits DNS lookup operations across all domains and resolvers, including TXT, MX, NS, CNAME, SRV, and address checks. Values are 1–500, or 0 (the default) to inherit `--concurrency`, preserving the default of 20 simultaneous lookups. It applies to both system and custom resolvers, with or without a proxy. A lookup can generate multiple wire queries, so this is not a packet limit or a queries-per-second limit. `--rate-limit` applies only to HTTP probes.
+
 ## Profiles and safety
 
 | Profile | Network behavior |
@@ -139,7 +147,8 @@ Scanning:
       --profile PROFILE        passive, standard, or deep
       --active                 enable bounded tenant HTTP probes
       --include-slugs          include domain-derived slug probes in active scans
-      --concurrency N          maximum concurrent operations (default 20)
+      --concurrency N          maximum concurrent domain workers (default 20)
+      --dns-concurrency N      simultaneous DNS lookups (0 inherits --concurrency)
       --rate-limit N           requests/second/provider (default 2)
       --timeout DURATION       per-operation timeout (default 10s)
       --retries N              transient retries (default 2)

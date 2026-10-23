@@ -92,7 +92,7 @@ type scanOptions struct {
 	active, verbose, silent, noColor, insecure, sensitive, forceStdin     bool
 	noCache, includeSlugs                                                 bool
 	timeout, cacheTTL                                                     time.Duration
-	retries, concurrency                                                  int
+	retries, concurrency, dnsConcurrency                                  int
 	rateLimit                                                             float64
 }
 
@@ -132,7 +132,8 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	set.DurationVar(&options.timeout, "timeout", defaults.Timeout, "per-request timeout")
 	set.DurationVar(&options.cacheTTL, "cache-ttl", defaults.CacheTTL, "stored evidence cache lifetime")
 	set.IntVar(&options.retries, "retries", defaults.Retries, "transient request retries")
-	set.IntVar(&options.concurrency, "concurrency", defaults.Concurrency, "maximum concurrent operations")
+	set.IntVar(&options.concurrency, "concurrency", defaults.Concurrency, "maximum concurrent domain workers (also default DNS concurrency)")
+	set.IntVar(&options.dnsConcurrency, "dns-concurrency", defaults.DNSConcurrency, "maximum concurrent DNS lookups; 0 inherits --concurrency")
 	set.Float64Var(&options.rateLimit, "rate-limit", defaults.RateLimit, "requests per second per provider")
 	set.Usage = func() { writeScanUsage(set.Output()) }
 	if err := set.Parse(args); err != nil {
@@ -212,6 +213,7 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		}
 	}
 	cfg.Profile, cfg.Active, cfg.Concurrency, cfg.RateLimit = options.profile, options.active, options.concurrency, options.rateLimit
+	cfg.DNSConcurrency = options.dnsConcurrency
 	cfg.IncludeSlugs = options.includeSlugs || (len(options.domains) > 0 && len(options.slugs) > 0)
 	cfg.Timeout, cfg.Retries, cfg.Proxy, cfg.InsecureTLS = options.timeout, options.retries, options.proxy, options.insecure
 	cfg.ShowSensitiveEvidence = options.sensitive
@@ -488,6 +490,7 @@ Usage:
 Legacy scan flags (-d, -s, -c, -o, -v, -x) continue to work without the "scan" command.`)
 }
 func writeScanUsage(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "DNS concurrency: --dns-concurrency N limits simultaneous DNS lookups (0 inherits --concurrency, default 20).")
 	_, _ = fmt.Fprintln(w, "List scanning: saase scan -l domains.txt [--resolvers-file resolvers.txt] [--proxy socks5://127.0.0.1:1080]")
 	_, _ = fmt.Fprintln(w, "Usage: saase scan -d example.com [--active] [--include-slugs] [--format text|json|jsonl|csv]")
 	_, _ = fmt.Fprintln(w, "       saase scan --slug acme --active [-s slack] [--format text|json|jsonl|csv]")

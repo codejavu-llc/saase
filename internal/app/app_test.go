@@ -175,3 +175,13 @@ func TestResolverFileValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestDNSConcurrencyFlag(t *testing.T) {
+	for _, value := range []string{"-1", "501"} {
+		var stdout, stderr bytes.Buffer
+		code := Run(context.Background(), []string{"scan", "-d", "example.com", "--dns-concurrency", value}, strings.NewReader(""), &stdout, &stderr)
+		if code != 1 || !strings.Contains(stderr.String(), "DNS concurrency") {
+			t.Fatalf("value=%s code=%d stderr=%s", value, code, &stderr)
+		}
+	}
+}
