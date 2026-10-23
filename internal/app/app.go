@@ -88,6 +88,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 type scanOptions struct {
 	domains, domainFiles, providers, providerFiles, slugs                 stringList
 	organization, outputFile, format, profile, proxy, rulesDir, storePath string
+	resolversFile                                                         string
 	active, verbose, silent, noColor, insecure, sensitive, forceStdin     bool
 	noCache, includeSlugs                                                 bool
 	timeout, cacheTTL                                                     time.Duration
@@ -113,6 +114,7 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	set.StringVar(&options.outputFile, "o", "", "mirror findings to a file")
 	set.StringVar(&options.format, "format", "text", "output format: text, json, jsonl, csv")
 	set.StringVar(&options.profile, "profile", defaults.Profile, "scan profile: passive, standard, deep")
+	set.StringVar(&options.resolversFile, "resolvers-file", "", "DNS resolver file for -l/--list or stdin scans (random resolver per domain)")
 	set.StringVar(&options.proxy, "x", "", "HTTP or SOCKS proxy URL")
 	set.StringVar(&options.proxy, "proxy", "", "HTTP or SOCKS proxy URL")
 	set.StringVar(&options.rulesDir, "rules-dir", "", "external provider rule directory")
@@ -154,12 +156,19 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		}
 		options.providers = append(options.providers, values...)
 	}
-	if options.forceStdin || (len(options.domains) == 0 && len(options.slugs) == 0 && !readerIsTerminal(stdin)) {
+	useStdin := options.forceStdin || (len(options.domains) == 0 && len(options.slugs) == 0 && !readerIsTerminal(stdin))
+	if options.resolversFile != "" && len(options.domainFiles) == 0 && !useStdin {
+		return fmt.Errorf("--resolvers-file requires -l/--list or stdin domain input")
+	}
+	if useStdin {
 		values, err := readLines(stdin)
 		if err != nil {
 			return fmt.Errorf("read targets from stdin: %w", err)
 		}
 		options.domains = append(options.domains, values...)
+	}
+	if options.resolversFile != "" && len(options.domains) == 0 {
+		return fmt.Errorf("--resolvers-file requires a non-empty domain list")
 	}
 	if len(options.domains) == 0 && len(options.slugs) == 0 {
 		return fmt.Errorf("no target specified; use -d, -l, --stdin, or --slug")
@@ -193,6 +202,15 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		}
 	}
 	cfg := defaults
+	if options.resolversFile != "" {
+		cfg.Resolvers, err = readLinesFile(options.resolversFile)
+		if err != nil {
+			return fmt.Errorf("read resolver file %q: %w", options.resolversFile, err)
+		}
+		if len(cfg.Resolvers) == 0 {
+			return fmt.Errorf("resolver file is empty")
+		}
+	}
 	cfg.Profile, cfg.Active, cfg.Concurrency, cfg.RateLimit = options.profile, options.active, options.concurrency, options.rateLimit
 	cfg.IncludeSlugs = options.includeSlugs || (len(options.domains) > 0 && len(options.slugs) > 0)
 	cfg.Timeout, cfg.Retries, cfg.Proxy, cfg.InsecureTLS = options.timeout, options.retries, options.proxy, options.insecure
@@ -470,6 +488,7 @@ Usage:
 Legacy scan flags (-d, -s, -c, -o, -v, -x) continue to work without the "scan" command.`)
 }
 func writeScanUsage(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "List scanning: saase scan -l domains.txt [--resolvers-file resolvers.txt] [--proxy socks5://127.0.0.1:1080]")
 	_, _ = fmt.Fprintln(w, "Usage: saase scan -d example.com [--active] [--include-slugs] [--format text|json|jsonl|csv]")
 	_, _ = fmt.Fprintln(w, "       saase scan --slug acme --active [-s slack] [--format text|json|jsonl|csv]")
 	_, _ = fmt.Fprintln(w, "Domain scans skip slug-based services unless --include-slugs or --slug NAME is supplied; -s selects providers.")

@@ -28,6 +28,7 @@ type Config struct {
 	Timeout               time.Duration
 	Retries               int
 	Proxy                 string
+	Resolvers             []string // Custom DNS servers; one is selected randomly per target.
 	InsecureTLS           bool
 	ShowSensitiveEvidence bool
 	UserAgent             string
@@ -93,7 +94,18 @@ func New(cfg Config, providerCatalog *catalog.Catalog) (*Scanner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Scanner{cfg: cfg, catalog: providerCatalog, dns: newNetResolver(), http: client, rate: newRateGate(cfg.RateLimit), sem: make(chan struct{}, cfg.Concurrency)}, nil
+	resolver := newNetResolver()
+	if len(cfg.Resolvers) > 0 {
+		cfg.Resolvers, err = normalizeResolvers(cfg.Resolvers)
+		if err != nil {
+			return nil, err
+		}
+		resolver, err = newCustomResolver(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &Scanner{cfg: cfg, catalog: providerCatalog, dns: resolver, http: client, rate: newRateGate(cfg.RateLimit), sem: make(chan struct{}, cfg.Concurrency)}, nil
 }
 
 func (s *Scanner) SetResolver(resolver DNSResolver) {
@@ -237,7 +249,7 @@ func (s *Scanner) scanTargetCached(ctx context.Context, t target.Target, selecte
 			}
 		}
 	}
-	findings, probeErrors := s.scanTarget(ctx, t, selected)
+	findings, probeErrors := s.scanTarget(s.resolverContext(ctx), t, selected)
 	if s.cache != nil && !s.cfg.DisableCache && ctx.Err() == nil {
 		payload, _ := json.Marshal(cachedTargetResult{Findings: findings, Errors: probeErrors})
 		_ = s.cache.PutCache(ctx, key, version, time.Now().Add(s.cfg.CacheTTL), payload)
@@ -254,6 +266,9 @@ func (s *Scanner) cacheKey(t target.Target, selected map[string]bool) string {
 	value := strings.Join([]string{t.Host, strings.Join(t.SlugCandidates, ","), strings.Join(providers, ","), s.cfg.Profile,
 		fmt.Sprint(s.cfg.Active), fmt.Sprint(s.cfg.IncludeSlugs), fmt.Sprint(s.cfg.InsecureTLS), fmt.Sprint(s.cfg.ShowSensitiveEvidence),
 		fmt.Sprintf("%d:%d:%d", len(s.catalog.Providers()), len(s.catalog.TXT), len(s.catalog.DNS))}, "|")
+	if len(s.cfg.Resolvers) > 0 {
+		value += "|resolvers:" + strings.Join(s.cfg.Resolvers, ",") + "|proxy:" + s.cfg.Proxy
+	}
 	if t.IsSlugOnly() {
 		value = "slug:" + t.Slug + "|" + value
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -144,5 +145,33 @@ func TestDomainWithSlugStillReadsExplicitStdin(t *testing.T) {
 	Run(ctx, []string{"scan", "--slug", "acme", "--stdin", "--no-color"}, strings.NewReader("example.com"), &stdout, &stderr)
 	if !strings.Contains(stdout.String(), "SCOPE     example.com") || strings.Contains(stderr.String(), "require --active") {
 		t.Fatalf("domain plus slug stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+}
+
+func TestResolverFileValidation(t *testing.T) {
+	dir := t.TempDir()
+	domains := filepath.Join(dir, "domains.txt")
+	resolvers := filepath.Join(dir, "resolvers.txt")
+	if err := os.WriteFile(domains, []byte("example.com\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		args          []string
+		content, want string
+	}{
+		{[]string{"-d", "example.com"}, "1.1.1.1\n", "requires -l/--list"},
+		{[]string{"-l", domains}, "", "resolver file is empty"},
+		{[]string{"-l", domains}, "invalid\n", "invalid DNS resolver"},
+		{[]string{"--stdin"}, "invalid\n", "invalid DNS resolver"},
+	} {
+		if err := os.WriteFile(resolvers, []byte(tc.content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		args := append([]string{"scan", "--resolvers-file", resolvers}, tc.args...)
+		var stdout, stderr bytes.Buffer
+		code := Run(context.Background(), args, strings.NewReader("example.com\n"), &stdout, &stderr)
+		if code != 1 || !strings.Contains(stderr.String(), tc.want) {
+			t.Errorf("%v code=%d stderr=%s", args, code, &stderr)
+		}
 	}
 }

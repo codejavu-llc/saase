@@ -2,6 +2,8 @@
 
 ## 2.0.0 - Unreleased
 
+- Added `--resolvers-file` for domain-list and stdin scans, with random resolver selection per target and optional DNS-over-TCP through SOCKS5 or HTTP CONNECT proxies. Included an example `resolvers.txt`.
+
 - Domain scans now skip slug-based HTTP probes by default; `--include-slugs` or an explicit `--slug` enables them. `-s` remains the provider filter.
 - Corrected tenant redirect/header fingerprints for Freshdesk, Freshworks, Monday, Okta, OneLogin, BambooHR, and TalentLMS; disabled Sumo Logic slug probing and invalidated cached results from the previous detector version.
 - Replaced sequential boolean checks with an evidence-driven, concurrent scan engine.

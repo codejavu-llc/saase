@@ -77,6 +77,21 @@ saase diff --db recon.db --list
 saase diff --db recon.db
 ```
 
+For domain lists (`-l` / `--list` or stdin), use `--resolvers-file` to select a random DNS server for each target. All DNS checks for that target, including provider-specific labels, use the selected server. The file accepts one IP address per line, optionally with a port (`1.1.1.1:53` or `[2606:4700:4700::1111]:53`); the default port is 53. Blank lines and lines starting with `#` are ignored. The supplied [`resolvers.txt`](resolvers.txt) contains example servers.
+
+```bash
+# Custom resolvers, direct DNS
+saase scan -l domains.txt --resolvers-file resolvers.txt --format json -o results.json
+
+# Send DNS over TCP through a SOCKS5 proxy
+saase scan -l domains.txt --resolvers-file resolvers.txt --proxy socks5://127.0.0.1:1080
+
+# Read a list from stdin
+cat domains.txt | saase scan --stdin --resolvers-file resolvers.txt
+```
+
+Without `--proxy`, custom resolvers use ordinary DNS (normally UDP, with TCP fallback). With `--proxy`, DNS uses TCP through SOCKS5/SOCKS5H or HTTP/HTTPS CONNECT; the proxy must allow connections to the resolver's port. Proxy credentials in the URL are supported. Failed proxy connections never fall back to direct DNS. The custom resolver pool and proxy configuration are included in the cache identity. Without `--resolvers-file`, DNS continues to use the system resolver. The flag requires list input and is rejected for standalone `-d` or slug-only scans. It affects DNS discovery; HTTP probes retain their existing proxy behavior.
+
 Targets retain their full hostname: `domain.com`, `subdomains.domain.com`, and `other.domain.com` are scanned and cached separately. URLs are accepted and normalized to their hostname. DNS checks and domain-based SSO probes use that hostname; provider-specific DNS labels are checked beneath it. Domain scans skip slug-based HTTP services by default, including with `--active`, `--profile standard`, or `--profile deep`. Add `--include-slugs` to check tenant names derived from the registrable parent domain, or `--slug NAME` to enable slug probes and add explicit candidates. HTTP probes still require active mode. `-s` / `--provider` only filters providers and does not enable slug probes. Cached results distinguish domain-only scans from scans that include slugs.
 
 With `--slug` and no domain input, only slug-based tenant/SSO HTTP services are checked. DNS discovery and services requiring a domain (such as Microsoft 365 and Google Workspace) are skipped, even when selected with `-s`. Use `--active`, `--profile standard`, or `--profile deep`; passive-only slug scans return an error. Each unique slug is reported and cached separately, with no extra candidates generated. Slugs are lowercased and must contain 1–63 ASCII letters, digits, or internal hyphens. When domains are supplied, `--slug` continues to add tenant candidates to each domain scan. With explicit slugs, stdin is read only when `--stdin` is supplied.
@@ -120,6 +135,7 @@ Input:
                               with domains: enable slugs and add a candidate
 
 Scanning:
+      --resolvers-file FILE   DNS servers for list/stdin scans; random per domain
       --profile PROFILE        passive, standard, or deep
       --active                 enable bounded tenant HTTP probes
       --include-slugs          include domain-derived slug probes in active scans
