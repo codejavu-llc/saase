@@ -2,6 +2,12 @@
 
 ## 2.0.0 - Unreleased
 
+- Added `--record-type` to select TXT, MX, NS, CNAME, or SRV discovery, with matching progress counts and isolated caches.
+
+- Moved low-memory spool files to `~/.saase/tmp/` with OS-managed deletion, including forced process termination.
+
+- Added `--low-memory` for disk-backed JSON/JSONL reports and bounded completed-result queues.
+
 - Added `--progress` to show completed, remaining, and cached/skipped DNS lookups on stderr, including dynamically discovered CNAME address checks.
 
 - Added `--dns-concurrency` to limit DNS lookups independently of domain workers; defaults to inheriting `--concurrency`.

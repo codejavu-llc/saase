@@ -70,6 +70,21 @@ func (s *Scanner) plannedDNSLookups(t target.Target, selected map[string]bool) i
 	if t.IsSlugOnly() {
 		return 0
 	}
-	// TXT + MX + five SRV checks, plus unique NS and CNAME names.
-	return 7 + len(s.nsNames(t.Host)) + len(s.cnameNames(t.Host, selected))
+	count := 0
+	if s.recordEnabled("TXT") {
+		count++
+	}
+	if s.recordEnabled("MX") {
+		count++
+	}
+	if s.recordEnabled("NS") {
+		count += len(s.nsNames(t.Host))
+	}
+	if s.recordEnabled("CNAME") {
+		count += len(s.cnameNames(t.Host, selected))
+	}
+	if s.recordEnabled("SRV") {
+		count += 5
+	}
+	return count
 }

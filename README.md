@@ -108,6 +108,18 @@ saase -d example.com -s slack -v -x http://127.0.0.1:8080
 
 The default text view streams each accepted finding as soon as it is observed, then closes with the aggregated scan summary. It uses a Unicode operator-console layout and enables ANSI color only on an interactive terminal. `--no-color` keeps the layout without escape sequences. `--silent` also streams unique tab-separated matches immediately, while JSON, JSONL, CSV, and files written with `-o` remain deterministic final reports without terminal decoration.
 
+Select a single DNS discovery record type with `--record-type`:
+
+```bash
+# TXT only (verification records and SPF), one lookup per uncached domain
+saase scan -l domains.txt --record-type txt --resolvers-file resolvers.txt --low-memory --progress --format json -o results.json
+
+# Mail infrastructure only
+saase scan -d example.com --record-type mx
+```
+
+Values are `all` (default), `txt`, `mx`, `ns`, `cname`, and `srv`, case-insensitive. The filter changes which DNS checks run, the progress plan, and cache identity; JSON metadata includes `record_type` when filtered. TXT mode makes one lookup per uncached target, although retries or truncated responses can require extra wire queries. NS and CNAME modes also check provider-specific labels, and SRV mode checks five service names. CNAME resolution may issue A/AAAA queries and retains address checks for discovered aliases. This filters DNS discovery; explicitly enabled active profiles or `--active` still run HTTP probes.
+
 Control DNS concurrency separately from domain workers:
 
 ```bash
@@ -129,6 +141,16 @@ Progress goes to stderr at most once per second as lookups finish, plus initial 
 ```
 
 These are DNS **lookup operations**, not individual packets or HTTP requests. Remaining includes queued and running lookups across all targets. Extra address checks discovered through CNAME results increase the plan; cached targets are counted as skipped. Failed lookups count as completed attempts, and interrupted scans are labeled accordingly. The option does not change JSON, JSONL, CSV, or saved report contents.
+
+For large domain lists, `--low-memory` keeps completed findings and errors on disk instead of accumulating the whole report in RAM:
+
+```bash
+saase scan -l domains.txt --resolvers-file resolvers.txt --dns-concurrency 5 --low-memory --progress --format json -o results.json
+```
+
+This mode supports JSON and JSONL. It keeps the same report fields and aggregates evidence per target, but target results are ordered by completion rather than globally sorted. The final output is written after the scan finishes. Only active workers and a bounded result queue retain findings in memory; the input domain list and metadata still scale with the number of targets. Temporary files are allocated under `~/.saase/tmp/` (created with private permissions), independently of `TMPDIR`. This avoids `/tmp` tmpfs on systems with disk-backed home directories; the actual backing filesystem depends on where your home is mounted. Linux uses unnamed files (`O_TMPFILE`) where supported, so they consume disk space while open without appearing in directory listings. The OS reclaims them when their handles close, including on Ctrl+C, SIGTERM, or SIGKILL. Other Unix systems unlink open files immediately; Windows uses delete-on-close handles. No cleanup process deletes other scans’ files. Enough free storage for the results is required. A spool write failure stops the scan. Lower `--concurrency` to reduce the number of target results held at once; `--dns-concurrency` only limits DNS lookups.
+
+`--low-memory` cannot be combined with `--store`, whose history writer still encodes a complete report in memory. Use `-o` to save JSON or JSONL. Ordinary JSON/JSONL output and `-o` alone do not enable bounded result storage.
 
 ## Profiles and safety
 
@@ -157,6 +179,7 @@ Input:
                               with domains: enable slugs and add a candidate
 
 Scanning:
+      --record-type TYPE      DNS discovery: all, txt, mx, ns, cname, or srv
       --resolvers-file FILE   DNS servers for list/stdin scans; random per domain
       --profile PROFILE        passive, standard, or deep
       --active                 enable bounded tenant HTTP probes
@@ -173,6 +196,7 @@ Output:
       --format FORMAT          text, json, jsonl, or csv
   -o FILE                     mirror stdout results to a file
   -v, --verbose               include evidence and print probe errors to stderr
+      --low-memory            spool JSON/JSONL results to temporary disk storage
       --progress              show completed/remaining DNS lookups on stderr
       --silent                print target, provider ID, and endpoint only
       --show-sensitive-evidence

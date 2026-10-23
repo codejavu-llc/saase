@@ -211,3 +211,27 @@ func TestDNSProgressKeepsJSONClean(t *testing.T) {
 		t.Fatalf("missing progress: %s", &stderr)
 	}
 }
+
+func TestLowMemoryValidation(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--low-memory"}, "requires --format"},
+		{[]string{"--low-memory", "--format", "json", "--store", "unused.db"}, "cannot be combined with --store"},
+	} {
+		var stdout, stderr bytes.Buffer
+		args := append([]string{"scan", "-d", "example.com"}, tc.args...)
+		if code := Run(context.Background(), args, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("code=%d stderr=%s", code, &stderr)
+		}
+	}
+}
+
+func TestInvalidRecordType(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{"scan", "-d", "example.com", "--record-type", "invalid"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "invalid record type") {
+		t.Fatalf("code=%d stderr=%s", code, &stderr)
+	}
+}

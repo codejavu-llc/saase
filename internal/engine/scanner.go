@@ -21,6 +21,7 @@ import (
 
 type Config struct {
 	Profile               string
+	RecordType            string // Empty means all DNS discovery record types.
 	Active                bool
 	IncludeSlugs          bool // Include slug-based HTTP probes when scanning domains.
 	Concurrency           int
@@ -98,6 +99,14 @@ func New(cfg Config, providerCatalog *catalog.Catalog) (*Scanner, error) {
 	default:
 		return nil, fmt.Errorf("unknown profile %q", cfg.Profile)
 	}
+	cfg.RecordType = strings.ToUpper(strings.TrimSpace(cfg.RecordType))
+	switch cfg.RecordType {
+	case "ALL":
+		cfg.RecordType = ""
+	case "", "TXT", "MX", "NS", "CNAME", "SRV":
+	default:
+		return nil, fmt.Errorf("invalid record type %q; use all, txt, mx, ns, cname, or srv", cfg.RecordType)
+	}
 	client, err := newHTTPClient(cfg)
 	if err != nil {
 		return nil, err
@@ -158,6 +167,22 @@ func (s *Scanner) observeFinding(finding model.Finding) model.Finding {
 }
 
 func (s *Scanner) Scan(ctx context.Context, targets []target.Target, providerSelectors []string) (model.ScanReport, error) {
+	return s.scan(ctx, targets, providerSelectors, nil)
+}
+
+// ScanTo sends aggregated results for each completed target to sink without
+// retaining them in the returned report. Calls are serialized; a slow sink
+// applies backpressure. A sink error cancels the scan and is returned.
+func (s *Scanner) ScanTo(ctx context.Context, targets []target.Target, providerSelectors []string, sink func([]model.Finding, []model.ProbeError) error) (model.ScanReport, error) {
+	if sink == nil {
+		return model.ScanReport{}, fmt.Errorf("result sink is required")
+	}
+	return s.scan(ctx, targets, providerSelectors, sink)
+}
+
+func (s *Scanner) scan(ctx context.Context, targets []target.Target, providerSelectors []string, sink func([]model.Finding, []model.ProbeError) error) (model.ScanReport, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	if len(targets) == 0 {
 		return model.ScanReport{}, fmt.Errorf("at least one target is required")
 	}
@@ -172,7 +197,7 @@ func (s *Scanner) Scan(ctx context.Context, targets []target.Target, providerSel
 	}
 	started := time.Now().UTC()
 	report := model.ScanReport{Metadata: model.ScanMetadata{
-		SchemaVersion: model.SchemaVersion, ScanID: scanID(), StartedAt: started, Profile: s.cfg.Profile,
+		SchemaVersion: model.SchemaVersion, ScanID: scanID(), StartedAt: started, Profile: s.cfg.Profile, RecordType: s.cfg.RecordType,
 		Active: s.cfg.Active, IncludeSlugs: s.cfg.IncludeSlugs, InsecureTLS: s.cfg.InsecureTLS, Targets: len(targets), ProviderRules: len(s.catalog.Providers()),
 	}}
 	for _, item := range targets {
@@ -196,7 +221,7 @@ func (s *Scanner) Scan(ctx context.Context, targets []target.Target, providerSel
 		errors   []model.ProbeError
 	}
 	jobs := make(chan target.Target)
-	results := make(chan targetResult, len(targets))
+	results := make(chan targetResult, s.cfg.Concurrency)
 	workers := s.cfg.Concurrency
 	if workers > len(targets) {
 		workers = len(targets)
@@ -207,6 +232,9 @@ func (s *Scanner) Scan(ctx context.Context, targets []target.Target, providerSel
 		go func() {
 			defer wg.Done()
 			for item := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
 				findings, probeErrors := s.scanTargetCached(ctx, item, selected)
 				results <- targetResult{findings: findings, errors: probeErrors}
 			}
@@ -223,7 +251,22 @@ func (s *Scanner) Scan(ctx context.Context, targets []target.Target, providerSel
 		}
 	}()
 	go func() { wg.Wait(); close(results) }()
+	var sinkErr error
+	totalFindings := 0
 	for result := range results {
+		if sinkErr != nil {
+			continue
+		} // Drain workers after cancellation.
+		totalFindings += len(result.findings)
+		if sink != nil {
+			findings := aggregate(result.findings)
+			sort.Slice(findings, func(i, j int) bool { return findings[i].Provider < findings[j].Provider })
+			if err := sink(findings, result.errors); err != nil {
+				sinkErr = err
+				cancel()
+			}
+			continue
+		}
 		report.Findings = append(report.Findings, result.findings...)
 		report.Errors = append(report.Errors, result.errors...)
 	}
@@ -244,7 +287,10 @@ func (s *Scanner) Scan(ctx context.Context, targets []target.Target, providerSel
 		tracker.update(0, 0, 0, true, ctx.Err() != nil)
 	}
 	s.emit(model.ScanEvent{Type: model.ScanEventFinished, Metadata: &finishedMetadata})
-	if ctx.Err() != nil && len(report.Findings) == 0 {
+	if sinkErr != nil {
+		return report, sinkErr
+	}
+	if ctx.Err() != nil && totalFindings == 0 {
 		return report, ctx.Err()
 	}
 	return report, nil
@@ -289,6 +335,9 @@ func (s *Scanner) cacheKey(t target.Target, selected map[string]bool) string {
 	value := strings.Join([]string{t.Host, strings.Join(t.SlugCandidates, ","), strings.Join(providers, ","), s.cfg.Profile,
 		fmt.Sprint(s.cfg.Active), fmt.Sprint(s.cfg.IncludeSlugs), fmt.Sprint(s.cfg.InsecureTLS), fmt.Sprint(s.cfg.ShowSensitiveEvidence),
 		fmt.Sprintf("%d:%d:%d", len(s.catalog.Providers()), len(s.catalog.TXT), len(s.catalog.DNS))}, "|")
+	if s.cfg.RecordType != "" {
+		value += "|record:" + s.cfg.RecordType
+	}
 	if len(s.cfg.Resolvers) > 0 {
 		value += "|resolvers:" + strings.Join(s.cfg.Resolvers, ",") + "|proxy:" + s.cfg.Proxy
 	}
@@ -316,83 +365,93 @@ func (s *Scanner) passiveFindings(ctx context.Context, t target.Target, selected
 	var findings []model.Finding
 	var probeErrors []model.ProbeError
 
-	txt, err := s.lookupTXT(ctx, t.Host)
-	if err != nil && !isDNSNotFound(err) {
-		probeErrors = append(probeErrors, dnsError(t.Host, "dns/txt", t.Host, err))
-	}
-	for _, record := range txt {
-		for _, rule := range s.catalog.TXT {
-			provider, ok := s.catalog.Provider(rule.Name)
-			if !ok || (len(selected) > 0 && !selected[provider.ID]) || !rule.Match(record) {
-				continue
-			}
-			signal := model.SignalTXT
-			confidence := model.ConfidenceHigh
-			if rule.MatchType == "spf_include" {
-				signal, confidence = model.SignalSPF, model.ConfidenceMedium
-			}
-			found := s.finding(t, provider, confidence, "passive/txt-v1", model.Evidence{
-				Signal: signal, Subject: t.Host, Value: s.safeTXT(record), Reference: rule.Reference, Sensitive: rule.MatchType != "spf_include",
-			})
-			found.RiskLead = "verification_record_review"
-			findings = append(findings, s.observeFinding(found))
+	if s.recordEnabled("TXT") {
+		txt, err := s.lookupTXT(ctx, t.Host)
+		if err != nil && !isDNSNotFound(err) {
+			probeErrors = append(probeErrors, dnsError(t.Host, "dns/txt", t.Host, err))
 		}
-	}
-
-	mxRecords, err := s.lookupMX(ctx, t.Host)
-	if err != nil && !isDNSNotFound(err) {
-		probeErrors = append(probeErrors, dnsError(t.Host, "dns/mx", t.Host, err))
-	}
-	for _, mx := range mxRecords {
-		for _, rule := range s.catalog.DNS {
-			provider, ok := s.catalog.Provider(rule.Name)
-			if !ok || (len(selected) > 0 && !selected[provider.ID]) || !matchesAnyDNS(mx.Host, rule.MXTargets) {
-				continue
-			}
-			found := s.finding(t, provider, model.ConfidenceMedium, "passive/mx-v1", model.Evidence{Signal: model.SignalMX, Subject: t.Host, Value: strings.TrimSuffix(mx.Host, "."), Reference: rule.Reference})
-			findings = append(findings, s.observeFinding(found))
-		}
-	}
-
-	nsNames := s.nsNames(t.Host)
-	for name := range nsNames {
-		nsRecords, lookupErr := s.lookupNS(ctx, name)
-		if lookupErr != nil {
-			if !isDNSNotFound(lookupErr) && name == t.Host {
-				probeErrors = append(probeErrors, dnsError(t.Host, "dns/ns", name, lookupErr))
-			}
-			continue
-		}
-		for _, ns := range nsRecords {
-			for _, rule := range s.catalog.DNS {
+		for _, record := range txt {
+			for _, rule := range s.catalog.TXT {
 				provider, ok := s.catalog.Provider(rule.Name)
-				if !ok || (len(selected) > 0 && !selected[provider.ID]) || !matchesAnyDNS(ns.Host, rule.NSTargets) {
+				if !ok || (len(selected) > 0 && !selected[provider.ID]) || !rule.Match(record) {
 					continue
 				}
-				found := s.finding(t, provider, model.ConfidenceMedium, "passive/ns-v1", model.Evidence{Signal: model.SignalNS, Subject: name, Value: strings.TrimSuffix(ns.Host, "."), Reference: rule.Reference})
+				signal := model.SignalTXT
+				confidence := model.ConfidenceHigh
+				if rule.MatchType == "spf_include" {
+					signal, confidence = model.SignalSPF, model.ConfidenceMedium
+				}
+				found := s.finding(t, provider, confidence, "passive/txt-v1", model.Evidence{
+					Signal: signal, Subject: t.Host, Value: s.safeTXT(record), Reference: rule.Reference, Sensitive: rule.MatchType != "spf_include",
+				})
+				found.RiskLead = "verification_record_review"
 				findings = append(findings, s.observeFinding(found))
 			}
 		}
+
 	}
-
-	// The supplied hostname can itself be a provider CNAME (for example,
-	// hosted sites), so inspect it in addition to provider-specific labels.
-	hosts := s.cnameNames(t.Host, selected)
-	findings = append(findings, s.cnameFindings(ctx, t, selected, hosts, "passive/cname-v1", "")...)
-
-	for _, service := range [][2]string{{"sip", "tcp"}, {"sip", "tls"}, {"autodiscover", "tcp"}, {"xmpp-server", "tcp"}, {"ldap", "tcp"}} {
-		_, records, lookupErr := s.lookupSRV(ctx, service[0], service[1], t.Host)
-		if lookupErr != nil {
-			continue
+	if s.recordEnabled("MX") {
+		mxRecords, err := s.lookupMX(ctx, t.Host)
+		if err != nil && !isDNSNotFound(err) {
+			probeErrors = append(probeErrors, dnsError(t.Host, "dns/mx", t.Host, err))
 		}
-		for _, record := range records {
+		for _, mx := range mxRecords {
 			for _, rule := range s.catalog.DNS {
 				provider, ok := s.catalog.Provider(rule.Name)
-				if !ok || (len(selected) > 0 && !selected[provider.ID]) || !matchesAnyDNS(record.Target, rule.CNAMETargets) {
+				if !ok || (len(selected) > 0 && !selected[provider.ID]) || !matchesAnyDNS(mx.Host, rule.MXTargets) {
 					continue
 				}
-				found := s.finding(t, provider, model.ConfidenceMedium, "passive/srv-v1", model.Evidence{Signal: model.SignalSRV, Subject: "_" + service[0] + "._" + service[1] + "." + t.Host, Value: strings.TrimSuffix(record.Target, "."), Reference: rule.Reference})
+				found := s.finding(t, provider, model.ConfidenceMedium, "passive/mx-v1", model.Evidence{Signal: model.SignalMX, Subject: t.Host, Value: strings.TrimSuffix(mx.Host, "."), Reference: rule.Reference})
 				findings = append(findings, s.observeFinding(found))
+			}
+		}
+
+	}
+	if s.recordEnabled("NS") {
+		nsNames := s.nsNames(t.Host)
+		for name := range nsNames {
+			nsRecords, lookupErr := s.lookupNS(ctx, name)
+			if lookupErr != nil {
+				if !isDNSNotFound(lookupErr) && name == t.Host {
+					probeErrors = append(probeErrors, dnsError(t.Host, "dns/ns", name, lookupErr))
+				}
+				continue
+			}
+			for _, ns := range nsRecords {
+				for _, rule := range s.catalog.DNS {
+					provider, ok := s.catalog.Provider(rule.Name)
+					if !ok || (len(selected) > 0 && !selected[provider.ID]) || !matchesAnyDNS(ns.Host, rule.NSTargets) {
+						continue
+					}
+					found := s.finding(t, provider, model.ConfidenceMedium, "passive/ns-v1", model.Evidence{Signal: model.SignalNS, Subject: name, Value: strings.TrimSuffix(ns.Host, "."), Reference: rule.Reference})
+					findings = append(findings, s.observeFinding(found))
+				}
+			}
+		}
+
+	}
+	if s.recordEnabled("CNAME") {
+		// The supplied hostname can itself be a provider CNAME (for example,
+		// hosted sites), so inspect it in addition to provider-specific labels.
+		hosts := s.cnameNames(t.Host, selected)
+		findings = append(findings, s.cnameFindings(ctx, t, selected, hosts, "passive/cname-v1", "")...)
+
+	}
+	if s.recordEnabled("SRV") {
+		for _, service := range [][2]string{{"sip", "tcp"}, {"sip", "tls"}, {"autodiscover", "tcp"}, {"xmpp-server", "tcp"}, {"ldap", "tcp"}} {
+			_, records, lookupErr := s.lookupSRV(ctx, service[0], service[1], t.Host)
+			if lookupErr != nil {
+				continue
+			}
+			for _, record := range records {
+				for _, rule := range s.catalog.DNS {
+					provider, ok := s.catalog.Provider(rule.Name)
+					if !ok || (len(selected) > 0 && !selected[provider.ID]) || !matchesAnyDNS(record.Target, rule.CNAMETargets) {
+						continue
+					}
+					found := s.finding(t, provider, model.ConfidenceMedium, "passive/srv-v1", model.Evidence{Signal: model.SignalSRV, Subject: "_" + service[0] + "._" + service[1] + "." + t.Host, Value: strings.TrimSuffix(record.Target, "."), Reference: rule.Reference})
+					findings = append(findings, s.observeFinding(found))
+				}
 			}
 		}
 	}
@@ -620,4 +679,20 @@ func (s *Scanner) lookupHost(ctx context.Context, name string) ([]string, error)
 	lookupCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 	return s.dns.LookupHost(lookupCtx, name)
+}
+
+func (s *Scanner) recordEnabled(kind string) bool {
+	return s.cfg.RecordType == "" || s.cfg.RecordType == kind
+}
+
+// PrimaryDNSChecks returns the number of root lookups whose failures are
+// reported, for CLI detection of scans where all primary DNS checks failed.
+func (s *Scanner) PrimaryDNSChecks() int {
+	count := 0
+	for _, kind := range []string{"TXT", "MX", "NS"} {
+		if s.recordEnabled(kind) {
+			count++
+		}
+	}
+	return count
 }

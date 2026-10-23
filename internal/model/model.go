@@ -84,6 +84,7 @@ type ScanMetadata struct {
 	Duration      time.Duration `json:"-"`
 	DurationMS    int64         `json:"duration_ms"`
 	Profile       string        `json:"profile"`
+	RecordType    string        `json:"record_type,omitempty"`
 	Active        bool          `json:"active"`
 	IncludeSlugs  bool          `json:"include_slugs"`
 	InsecureTLS   bool          `json:"insecure_tls"`

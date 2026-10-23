@@ -89,9 +89,9 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 type scanOptions struct {
 	domains, domainFiles, providers, providerFiles, slugs                 stringList
 	organization, outputFile, format, profile, proxy, rulesDir, storePath string
-	resolversFile                                                         string
+	resolversFile, recordType                                             string
 	active, verbose, silent, noColor, insecure, sensitive, forceStdin     bool
-	noCache, includeSlugs, progress                                       bool
+	noCache, includeSlugs, progress, lowMemory                            bool
 	timeout, cacheTTL                                                     time.Duration
 	retries, concurrency, dnsConcurrency                                  int
 	rateLimit                                                             float64
@@ -115,6 +115,7 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	set.StringVar(&options.outputFile, "o", "", "mirror findings to a file")
 	set.StringVar(&options.format, "format", "text", "output format: text, json, jsonl, csv")
 	set.StringVar(&options.profile, "profile", defaults.Profile, "scan profile: passive, standard, deep")
+	set.StringVar(&options.recordType, "record-type", "all", "DNS discovery record type: all, txt, mx, ns, cname, or srv")
 	set.StringVar(&options.resolversFile, "resolvers-file", "", "DNS resolver file for -l/--list or stdin scans (random resolver per domain)")
 	set.StringVar(&options.proxy, "x", "", "HTTP or SOCKS proxy URL")
 	set.StringVar(&options.proxy, "proxy", "", "HTTP or SOCKS proxy URL")
@@ -125,6 +126,7 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	set.BoolVar(&options.verbose, "v", false, "show evidence and probe errors")
 	set.BoolVar(&options.verbose, "verbose", false, "show evidence and probe errors")
 	set.BoolVar(&options.silent, "silent", false, "print pipe-friendly findings only")
+	set.BoolVar(&options.lowMemory, "low-memory", false, "spool JSON/JSONL results to disk instead of retaining them in memory")
 	set.BoolVar(&options.progress, "progress", false, "show completed and remaining DNS lookups on stderr")
 	set.BoolVar(&options.noColor, "no-color", false, "disable ANSI color")
 	set.BoolVar(&options.insecure, "insecure", false, "disable TLS verification (recorded in metadata)")
@@ -140,6 +142,14 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	set.Usage = func() { writeScanUsage(set.Output()) }
 	if err := set.Parse(args); err != nil {
 		return err
+	}
+	if options.lowMemory {
+		if options.format != "json" && options.format != "jsonl" {
+			return fmt.Errorf("--low-memory requires --format json or jsonl")
+		}
+		if options.storePath != "" {
+			return fmt.Errorf("--low-memory cannot be combined with --store; use -o to save the report")
+		}
 	}
 	options.domains = append(options.domains, set.Args()...)
 	if len(options.providerFiles) > 0 && hasShortConfig(args) {
@@ -215,6 +225,7 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		}
 	}
 	cfg.Profile, cfg.Active, cfg.Concurrency, cfg.RateLimit = options.profile, options.active, options.concurrency, options.rateLimit
+	cfg.RecordType = options.recordType
 	cfg.DNSConcurrency = options.dnsConcurrency
 	cfg.TrackDNSProgress = options.progress
 	cfg.IncludeSlugs = options.includeSlugs || (len(options.domains) > 0 && len(options.slugs) > 0)
@@ -233,6 +244,9 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		}
 		defer database.Close()
 		scanner.SetCache(database)
+	}
+	if options.lowMemory {
+		return runLowMemoryScan(ctx, scanner, normalized, options, stdout, stderr)
 	}
 	color := !options.noColor && strings.EqualFold(options.format, "text") && writerIsTerminal(stdout)
 	renderOptions := output.Options{Format: options.format, Verbose: options.verbose, Silent: options.silent, Color: color}
@@ -290,7 +304,7 @@ func runScan(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 			_, _ = fmt.Fprintf(stderr, "%s session %s → %s\n", consolePaint(stderr, "1;38;5;45", "[ SAASE // STORE ]"), report.Metadata.ScanID, options.storePath)
 		}
 	}
-	if scanErr == nil && len(report.Findings) == 0 && len(report.Errors) >= len(normalized)*3 {
+	if scanErr == nil && len(report.Findings) == 0 && scanner.PrimaryDNSChecks() > 0 && len(report.Errors) >= len(normalized)*scanner.PrimaryDNSChecks() {
 		return exitError{code: 2, err: fmt.Errorf("scan completed but all primary discovery probes failed")}
 	}
 	return scanErr
@@ -500,6 +514,8 @@ Usage:
 Legacy scan flags (-d, -s, -c, -o, -v, -x) continue to work without the "scan" command.`)
 }
 func writeScanUsage(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "DNS record filter: --record-type txt|mx|ns|cname|srv (default: all).")
+	_, _ = fmt.Fprintln(w, "Large scans: --low-memory --format json|jsonl spools results to temporary disk storage.")
 	_, _ = fmt.Fprintln(w, "Progress: --progress shows completed and remaining DNS lookups on stderr.")
 	_, _ = fmt.Fprintln(w, "DNS concurrency: --dns-concurrency N limits simultaneous DNS lookups (0 inherits --concurrency, default 20).")
 	_, _ = fmt.Fprintln(w, "List scanning: saase scan -l domains.txt [--resolvers-file resolvers.txt] [--proxy socks5://127.0.0.1:1080]")
